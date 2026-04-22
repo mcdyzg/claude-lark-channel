@@ -237,7 +237,38 @@ export class TmuxPool {
       return false;
     }
     lg.info(`spawnTmux OK tmux=${tmuxSession} scope=${session.scopeKey}`);
+    // --dangerously-load-development-channels 会弹一个交互式确认，阻塞启动。
+    // 异步轮询 pane，检测到 "I am using this for local development" 就自动
+    // 发 Enter 确认（默认选项就是 1.）。fire-and-forget，不阻塞当前路径。
+    void this.autoConfirmDevChannel(tmuxSession);
     return true;
+  }
+
+  /** 10 秒内轮询 pane，检测到 dev-channel 警告就发 Enter 自动确认 */
+  private async autoConfirmDevChannel(tmuxSession: string): Promise<void> {
+    const lg = this.deps.logger;
+    const deadline = Date.now() + 10_000;
+    const marker = 'I am using this for local development';
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 300));
+      let pane: string;
+      try {
+        pane = execSync(`tmux capture-pane -t ${shellQuote(tmuxSession)} -p`, { encoding: 'utf-8' });
+      } catch {
+        lg.debug(`autoConfirm: tmux ${tmuxSession} gone; stopping poll`);
+        return;
+      }
+      if (pane.includes(marker)) {
+        try {
+          execSync(`tmux send-keys -t ${shellQuote(tmuxSession)} Enter`);
+          lg.info(`autoConfirm: dev-channel warning dismissed via Enter; tmux=${tmuxSession}`);
+        } catch (err: any) {
+          lg.warn(`autoConfirm: send-keys failed tmux=${tmuxSession} err=${err?.message ?? err}`);
+        }
+        return;
+      }
+    }
+    lg.warn(`autoConfirm: dev-channel warning never appeared within 10s (may already be dismissed); tmux=${tmuxSession}`);
   }
 
   private killEntry(scopeKey: string): void {
