@@ -3457,8 +3457,8 @@ git commit -m "feat: role dispatcher selects master or child from env"
   "name": "lark-channel",
   "version": "0.1.0",
   "description": "Scope-isolated Feishu/Lark channel plugin for Claude Code",
-  "author": { "name": "loujiahao" },
-  "repository": "https://github.com/loujiahao/claude-lark-channel",
+  "author": { "name": "mcdyzg" },
+  "repository": "https://github.com/mcdyzg/claude-lark-channel",
   "license": "Apache-2.0",
   "keywords": ["feishu", "lark", "im", "bot", "channel", "tmux"]
 }
@@ -3470,7 +3470,7 @@ git commit -m "feat: role dispatcher selects master or child from env"
 {
   "name": "claude-lark-channel",
   "description": "Feishu/Lark channel for Claude Code — per-scope tmux isolation, strict thread/chat separation, multimodal",
-  "owner": { "name": "loujiahao", "email": "loujiahao@bytedance.com" },
+  "owner": { "name": "mcdyzg", "email": "--" },
   "plugins": [
     {
       "name": "lark-channel",

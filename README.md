@@ -19,7 +19,7 @@ Feishu/Lark channel plugin for Claude Code. Bridges IM messages into Claude via 
 
 ## Install
 ```
-/plugin marketplace add https://github.com/loujiahao/claude-lark-channel.git
+/plugin marketplace add https://github.com/mcdyzg/claude-lark-channel.git
 /plugin install lark-channel@claude-lark-channel
 /reload-plugins
 /lark-channel:configure setup

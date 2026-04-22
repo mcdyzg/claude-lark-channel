@@ -1,7 +1,7 @@
 {
   "name": "claude-lark-channel",
   "description": "Feishu/Lark channel for Claude Code — per-scope tmux isolation, strict thread/chat separation, multimodal",
-  "owner": { "name": "loujiahao", "email": "loujiahao@bytedance.com" },
+  "owner": { "name": "mcdyzg", "email": "--" },
   "plugins": [
     {
       "name": "lark-channel",

@@ -1,7 +1,7 @@
 # claude-lark-channel 设计文档
 
 - **日期**：2026-04-21
-- **作者**：loujiahao@bytedance.com
+- **作者**：--
 - **状态**：设计（待实现）
 - **参考**：`claude-lark-plugin`（channel 机制 + 多模态）、`cc-channel`（scope 隔离）、`easy-harness`（tmux + SessionStart hook）
 
