@@ -3,37 +3,95 @@ import { resolveThreadBackground, resolveChatHistoryBackground } from '../../src
 
 describe('resolveThreadBackground', () => {
   it('returns null when scope != thread', async () => {
-    const r = await resolveThreadBackground({ chatId: 'c', threadId: 't', messageId: 'm' }, 'chat', async () => null);
+    const r = await resolveThreadBackground(
+      { chatId: 'c', threadId: 't', messageId: 'm' },
+      'chat',
+      async () => null,
+    );
     expect(r).toBeNull();
   });
 
   it('returns null when no threadId', async () => {
-    const r = await resolveThreadBackground({ chatId: 'c', messageId: 'm' }, 'thread', async () => null);
+    const r = await resolveThreadBackground(
+      { chatId: 'c', messageId: 'm' },
+      'thread',
+      async () => null,
+    );
     expect(r).toBeNull();
   });
 
   it('returns null when current message is thread root', async () => {
-    const fetcher = vi.fn(async () => ({ messageId: 'm1', text: 'root text', createTime: 0 }));
-    const r = await resolveThreadBackground({ chatId: 'c', threadId: 't', messageId: 'm1' }, 'thread', fetcher);
+    const fetcher = vi.fn(async () => ({
+      messageId: 'm1',
+      text: 'root text',
+      imageKeys: [],
+      createTime: 0,
+    }));
+    const r = await resolveThreadBackground(
+      { chatId: 'c', threadId: 't', messageId: 'm1' },
+      'thread',
+      fetcher,
+    );
     expect(r).toBeNull();
   });
 
-  it('returns background prefix + root text', async () => {
-    const fetcher = vi.fn(async () => ({ messageId: 'm_root', text: 'initial topic', createTime: 0 }));
-    const r = await resolveThreadBackground({ chatId: 'c', threadId: 't', messageId: 'm2' }, 'thread', fetcher);
-    expect(r).toBe('【话题背景】\ninitial topic');
+  it('returns { text, imageKeys } with root text', async () => {
+    const fetcher = vi.fn(async () => ({
+      messageId: 'm_root',
+      text: 'initial topic',
+      imageKeys: [],
+      createTime: 0,
+    }));
+    const r = await resolveThreadBackground(
+      { chatId: 'c', threadId: 't', messageId: 'm2' },
+      'thread',
+      fetcher,
+    );
+    expect(r).toEqual({ text: '【话题背景】\ninitial topic', imageKeys: [] });
   });
 
   it('returns null when fetcher throws', async () => {
-    const r = await resolveThreadBackground({ chatId: 'c', threadId: 't', messageId: 'm2' }, 'thread',
-      async () => { throw new Error('boom'); });
+    const r = await resolveThreadBackground(
+      { chatId: 'c', threadId: 't', messageId: 'm2' },
+      'thread',
+      async () => {
+        throw new Error('boom');
+      },
+    );
     expect(r).toBeNull();
   });
 
   it('uses placeholder for empty root text', async () => {
-    const fetcher = async () => ({ messageId: 'm_root', text: '', createTime: 0 });
-    const r = await resolveThreadBackground({ chatId: 'c', threadId: 't', messageId: 'm2' }, 'thread', fetcher);
-    expect(r).toBe('【话题背景】\n[非文本消息]');
+    const fetcher = async () => ({
+      messageId: 'm_root',
+      text: '',
+      imageKeys: [],
+      createTime: 0,
+    });
+    const r = await resolveThreadBackground(
+      { chatId: 'c', threadId: 't', messageId: 'm2' },
+      'thread',
+      fetcher,
+    );
+    expect(r).toEqual({ text: '【话题背景】\n[非文本消息]', imageKeys: [] });
+  });
+
+  it('passes through imageKeys from root', async () => {
+    const fetcher = async () => ({
+      messageId: 'm_root',
+      text: '看这张图',
+      imageKeys: ['img_aaa', 'img_bbb'],
+      createTime: 0,
+    });
+    const r = await resolveThreadBackground(
+      { chatId: 'c', threadId: 't', messageId: 'm_follow' },
+      'thread',
+      fetcher,
+    );
+    expect(r).toEqual({
+      text: '【话题背景】\n看这张图',
+      imageKeys: ['img_aaa', 'img_bbb'],
+    });
   });
 });
 

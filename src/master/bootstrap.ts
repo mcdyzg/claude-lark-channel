@@ -3,7 +3,13 @@ import type { SessionScope } from '../shared/config.js';
 export interface ThreadRoot {
   messageId: string;
   text: string;
+  imageKeys: string[];
   createTime: number;
+}
+
+export interface ThreadBackground {
+  text: string;
+  imageKeys: string[];
 }
 
 export interface BootstrapEvent {
@@ -30,7 +36,7 @@ export async function resolveThreadBackground(
   event: BootstrapEvent,
   scope: SessionScope,
   fetcher: ThreadRootFetcher,
-): Promise<string | null> {
+): Promise<ThreadBackground | null> {
   if (scope !== 'thread') return null;
   if (!event.threadId) return null;
   let root: ThreadRoot | null;
@@ -41,8 +47,11 @@ export async function resolveThreadBackground(
   }
   if (!root) return null;
   if (root.messageId === event.messageId) return null;
-  const text = root.text.length > 0 ? root.text : NON_TEXT_PLACEHOLDER;
-  return `${THREAD_PREFIX}${text}`;
+  const bodyText = root.text.length > 0 ? root.text : NON_TEXT_PLACEHOLDER;
+  return {
+    text: `${THREAD_PREFIX}${bodyText}`,
+    imageKeys: root.imageKeys ?? [],
+  };
 }
 
 export interface ChatHistoryOptions {
