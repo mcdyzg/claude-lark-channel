@@ -26,7 +26,7 @@ Feishu/Lark channel plugin for Claude Code. Bridges IM messages into Claude via 
 ```
 
 ## Layout
-- Config: `~/.claude/channels/lark-channel/.env`
+- Config: `~/.claude/channels/lark-channel/config.json`
 - Sessions: `~/.claude/channels/lark-channel/sessions/by-id,by-scope/`
 - Downloaded media: `~/.claude/channels/lark-channel/inbox/`
 - Socket: `~/.claude/channels/lark-channel/bridge.sock`
