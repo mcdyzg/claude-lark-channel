@@ -1,0 +1,15 @@
+{
+  "name": "claude-lark-channel",
+  "description": "Feishu/Lark channel for Claude Code — per-scope tmux isolation, strict thread/chat separation, multimodal",
+  "owner": { "name": "loujiahao", "email": "loujiahao@bytedance.com" },
+  "plugins": [
+    {
+      "name": "lark-channel",
+      "version": "0.1.0",
+      "source": "./",
+      "description": "Scope-isolated Feishu/Lark channel plugin. Each chat/thread runs in its own tmux-hosted Claude session.",
+      "category": "productivity",
+      "keywords": ["feishu", "lark", "im", "bot", "channel", "tmux", "scope"]
+    }
+  ]
+}
