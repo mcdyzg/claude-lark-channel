@@ -93,7 +93,19 @@ export class TmuxPool {
       this.evictLRU();
     }
 
+    return this.attemptSpawn(scopeKey, /*allowResumeRetry*/ true);
+  }
+
+  /**
+   * 拉起一次 tmux + claude，并等子进程 hello。失败时：
+   * - 如果本次用的是 --resume（claudeSessionId 非空），可能是 session id 已损坏
+   *   （claude 尚未持久化就退了 / 用户删了 projects/.jsonl）。清空该 id 并
+   *   按"全新 session"再试一次。spec §6.4 行为。
+   * - 否则直接返回 null。
+   */
+  private async attemptSpawn(scopeKey: string, allowResumeRetry: boolean): Promise<PoolEntry | null> {
     const session = this.deps.store.getOrCreate(scopeKey, this.deps.config.defaultWorkDir);
+    const hadResumeId = !!session.claudeSessionId;
     const tmuxSession = `lark-${session.id}`;
     const entry: PoolEntry = {
       scopeKey,
@@ -113,11 +125,23 @@ export class TmuxPool {
     }
 
     const ready = await this.waitForHello(scopeKey);
-    if (!ready) {
-      this.killEntry(scopeKey);
-      return null;
+    if (ready) return entry;
+
+    // hello 超时。如果之前尝试了 --resume，大概率是 session id 损坏（比如
+    // claude 上次根本没把 jsonl 写盘就退了）。清掉 claudeSessionId + 重置
+    // rootInjected，然后按全新 session 再拉一次。
+    this.killEntry(scopeKey);
+    if (allowResumeRetry && hadResumeId) {
+      console.error(`[pool] hello timeout with --resume=${session.claudeSessionId}; clearing and retrying fresh for scope=${scopeKey}`);
+      const fresh = this.deps.store.getByScopeKey(scopeKey);
+      if (fresh) {
+        fresh.claudeSessionId = '';
+        fresh.rootInjected = false;
+        this.deps.store.save(fresh);
+      }
+      return this.attemptSpawn(scopeKey, /*allowResumeRetry*/ false);
     }
-    return entry;
+    return null;
   }
 
   private waitForHello(scopeKey: string): Promise<boolean> {
