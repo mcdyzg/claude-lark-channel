@@ -40,7 +40,7 @@ export async function startMaster(): Promise<void> {
   }
 
   // 预检工具依赖
-  assertToolExists('tmux', '--version');
+  assertToolExists('tmux', '-V');
   assertToolExists('jq', '--version');
   assertToolExists('claude', '--version');
   fs.mkdirSync(cfg.storeDir, { recursive: true });
