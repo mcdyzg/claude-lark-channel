@@ -99,14 +99,23 @@ export async function fetchChatHistory(
     });
     const items: any[] = resp?.data?.items ?? [];
     const { extractPlainText } = await import('./message-parser.js');
-    return items.reverse().map((m: any) => ({
-      senderId: m.sender?.id ?? '',
-      senderName: m.sender?.id ?? '',
-      text: extractPlainText(m.msg_type ?? 'text', m.body?.content ?? ''),
-      createTime: m.create_time ? parseInt(String(m.create_time), 10) : 0,
-    }));
+    return items.reverse().map((m: any) => {
+      const sid = m.sender?.id ?? '';
+      return {
+        senderId: sid,
+        senderName: displayAlias(sid),
+        text: extractPlainText(m.msg_type ?? 'text', m.body?.content ?? ''),
+        createTime: m.create_time ? parseInt(String(m.create_time), 10) : 0,
+      };
+    });
   } catch (err) {
     console.error('[feishu] fetchChatHistory failed:', err);
     return [];
   }
+}
+
+/** 将 open_id 转换为可读的短别名，与 claude-lark-plugin 保持一致 */
+function displayAlias(id: string): string {
+  if (!id) return 'unknown';
+  return `user_${id.slice(-7)}`;
 }
