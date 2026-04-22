@@ -31,6 +31,18 @@ Feishu/Lark channel plugin for Claude Code. Bridges IM messages into Claude via 
 /lark-channel:configure setup
 ```
 
+## Start
+
+After installing and configuring, **open a new terminal window** and launch a dedicated long-running host:
+
+```bash
+claude --dangerously-load-development-channels "plugin:lark-channel@claude-lark-channel" --dangerously-skip-permissions
+```
+
+**Leave this window open** — it is the master process hosting the Feishu WebSocket connection. Per-scope Claude sessions are spawned into their own tmux sessions under this master. Closing this window stops the bridge (tmux sessions are preserved and adopted when you restart the master).
+
+Confirm the startup warning by pressing **Enter** when the `"WARNING: Loading development channels"` prompt appears (the `--dangerously-load-development-channels` flag is required because custom plugins are not on Anthropic's allowlist during the channels research preview).
+
 ## Configuration
 
 Config lives at `~/.claude/channels/lark-channel/config.json`. Manage via the skill:
