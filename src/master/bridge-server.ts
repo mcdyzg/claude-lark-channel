@@ -57,6 +57,14 @@ export class BridgeServer {
       if (!socket.destroyed) socket.write(serializeEnvelope(env));
     };
 
+    // 写入拒绝消息后优雅关闭：socket.end(data) 保证数据刷出后再发 FIN，
+    // 避免 socket.destroy() 直接截断导致子进程收不到 hello_reject 而循环重连
+    const rejectAndClose = (reason: string) => {
+      if (!socket.destroyed) {
+        socket.end(serializeEnvelope({ t: 'hello_reject', reason }));
+      }
+    };
+
     const handleLine = (line: string): void => {
       const env = parseEnvelope(line);
       if (!env) {
@@ -67,14 +75,12 @@ export class BridgeServer {
       if (!established) {
         if (env.t !== 'hello') {
           console.error(`[bridge] expected hello, got ${env.t}; closing`);
-          write({ t: 'hello_reject', reason: 'expected_hello_first' });
-          socket.destroy();
+          rejectAndClose('expected_hello_first');
           return;
         }
         const hello = env as Extract<Envelope, { t: 'hello' }>;
         if (hello.version !== PROTOCOL_VERSION) {
-          write({ t: 'hello_reject', reason: `version_mismatch:need_${PROTOCOL_VERSION}` });
-          socket.destroy();
+          rejectAndClose(`version_mismatch:need_${PROTOCOL_VERSION}`);
           return;
         }
         scopeKeyBound = hello.scopeKey;
