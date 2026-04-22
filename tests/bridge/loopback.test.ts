@@ -4,6 +4,10 @@ import path from 'node:path';
 import os from 'node:os';
 import { BridgeServer } from '../../src/master/bridge-server.js';
 import { BridgeClient } from '../../src/child/bridge-client.js';
+import { Logger } from '../../src/shared/logger.js';
+
+// 测试里用静默 logger（既不写 stderr 也不写文件）
+const silent = new Logger('test', null, 'error');
 
 let sockPath = '';
 let server: BridgeServer | null = null;
@@ -34,6 +38,7 @@ describe('bridge loopback', () => {
         }
         throw new Error(`unexpected method ${method}`);
       },
+      silent,
       (conn) => {
         // 连接后推送消息（setImmediate 确保 hello_ack 已送达客户端）
         setImmediate(() => server!.push(conn.scopeKey, 'hello-content', { scope: conn.scopeKey }));
@@ -46,6 +51,7 @@ describe('bridge loopback', () => {
       scopeKey: 'chat:test',
       scopeId: 'id-test',
       rpcTimeoutMs: 2000,
+      logger: silent,
     });
     client.setPushHandler((content, meta) => {
       received.push({ scope: String(meta.scope), content });

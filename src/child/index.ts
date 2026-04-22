@@ -1,21 +1,28 @@
+import path from 'node:path';
+import os from 'node:os';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { BridgeClient } from './bridge-client.js';
 import { registerChildTools } from './tools.js';
+import { createRootLogger } from '../shared/logger.js';
 
 export async function startChild(): Promise<void> {
   const scopeKey = process.env.LARK_CHANNEL_SCOPE_KEY ?? '';
   const scopeId = process.env.LARK_CHANNEL_SCOPE_ID ?? '';
   const sock = process.env.LARK_CHANNEL_SOCK ?? '';
+  const store = process.env.LARK_CHANNEL_STORE
+    ?? path.join(os.homedir(), '.claude', 'channels', 'lark-channel');
   const rpcTimeoutMs = parseInt(process.env.LARK_CHANNEL_RPC_TIMEOUT_MS ?? '60000', 10);
+  const logLevel = (process.env.LARK_CHANNEL_LOG_LEVEL as 'error'|'warn'|'info'|'debug') ?? 'info';
+
+  const logsDir = path.join(store, 'logs');
+  const logger = createRootLogger(`child[${scopeKey}]`, logsDir, logLevel);
 
   if (!scopeKey || !scopeId || !sock) {
-    console.error(
-      `[child] missing env: SCOPE_KEY=${scopeKey} SCOPE_ID=${scopeId} SOCK=${sock}`,
-    );
+    logger.error(`missing env: SCOPE_KEY=${scopeKey} SCOPE_ID=${scopeId} SOCK=${sock}`);
     process.exit(1);
   }
-  console.error(`[child] starting scope=${scopeKey} id=${scopeId}`);
+  logger.info(`starting scope=${scopeKey} scopeId=${scopeId} sock=${sock} logLevel=${logLevel}`);
 
   const server = new McpServer(
     { name: 'claude-lark-channel', version: '0.1.0' },
@@ -38,28 +45,46 @@ export async function startChild(): Promise<void> {
     scopeKey,
     scopeId,
     rpcTimeoutMs,
+    logger: logger.child('bridge'),
   });
 
   bridge.setPushHandler((content, meta) => {
+    logger.info(`pushHandler invoked contentLen=${content.length} metaKeys=[${Object.keys(meta).join(',')}]`);
     server.server.notification({
       method: 'notifications/claude/channel',
       params: { content, meta },
+    }).then(() => {
+      logger.info(`notification emitted to MCP client OK`);
     }).catch((err) => {
-      console.error('[child] failed to forward channel notification:', err);
+      logger.error(`notification emit FAILED: ${err?.message ?? err}`);
     });
   });
 
   registerChildTools(server, bridge);
+  logger.debug(`MCP tools registered: reply, download_attachment`);
 
-  // Gate bridge.start() until MCP handshake fully completes. Otherwise master
-  // may push a channel_push before the host Claude sends `initialized`, and
-  // the resulting `server.notification(...)` is dropped per MCP spec.
+  // 关键时序：延迟 bridge.start() 到 MCP `initialized` 完成。否则若 master 在
+  // 握手结束前就推送 channel_push，server.notification(...) 会被 MCP SDK 按
+  // 协议静默丢弃。
+  let bridgeStarted = false;
   server.server.oninitialized = () => {
-    console.error('[child] MCP initialized; connecting bridge to master');
+    if (bridgeStarted) return;
+    bridgeStarted = true;
+    logger.info(`MCP client sent 'initialized' → starting bridge to master`);
     bridge.start();
   };
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('[child] MCP stdio connected; awaiting initialized handshake...');
+  logger.info(`MCP stdio transport connected; awaiting MCP client 'initialized' handshake...`);
+
+  // 兜底：若 30s 后 oninitialized 仍未触发，强行启动 bridge 并告警（至少
+  // 保留 RPC 能力；channel 可能无法工作）。目的只是避免完全静默。
+  setTimeout(() => {
+    if (!bridgeStarted) {
+      bridgeStarted = true;
+      logger.error(`oninitialized NOT fired within 30s; starting bridge anyway. channel_push notifications may be dropped by MCP client.`);
+      bridge.start();
+    }
+  }, 30_000);
 }

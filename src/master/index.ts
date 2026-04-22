@@ -27,6 +27,7 @@ import {
   resolveThreadBackground,
   resolveChatHistoryBackground,
 } from './bootstrap.js';
+import { createRootLogger } from '../shared/logger.js';
 
 const CHAT_HISTORY_LIMIT = 20;
 
@@ -55,6 +56,10 @@ export async function startMaster(): Promise<void> {
     process.exit(0);
   }
 
+  // 根 logger（写到 <logsDir>/debug.log）
+  const rootLogger = createRootLogger('master', cfg.logsDir, cfg.logLevel);
+  rootLogger.info(`startMaster pid=${process.pid} storeDir=${cfg.storeDir} scopeMode=${cfg.scopeMode}`);
+
   // MCP transport 对接宿主 Claude（不暴露任何工具，仅保持 stdio 连通）
   const mcpServer = new McpServer(
     { name: 'claude-lark-channel-master', version: '0.1.0' },
@@ -65,7 +70,7 @@ export async function startMaster(): Promise<void> {
   );
   const transport = new StdioServerTransport();
   await mcpServer.connect(transport);
-  console.error('[master] MCP connected (host)');
+  rootLogger.info('MCP stdio connected to host Claude');
 
   // 核心服务
   const store = new SessionStore(cfg.sessionsDir);
@@ -102,33 +107,44 @@ export async function startMaster(): Promise<void> {
       }
       throw new Error(`unknown rpc method: ${method}`);
     },
+    rootLogger.child('bridge'),
     (conn: ChildConn) => pool.markChildConnected(conn),
     (scopeKey: string) => pool.markChildDisconnected(scopeKey),
   );
   await bridge.start();
-  console.error(`[master] bridge listening at ${cfg.socketPath}`);
 
-  const pool = new TmuxPool({ config: cfg, store, bridge, pluginRoot: process.env.CLAUDE_PLUGIN_ROOT ?? '' });
+  const pool = new TmuxPool({
+    config: cfg,
+    store,
+    bridge,
+    pluginRoot: process.env.CLAUDE_PLUGIN_ROOT ?? '',
+    logger: rootLogger.child('pool'),
+  });
   pool.start();
 
   // Feishu WS 连接
   const wsClient = createFeishuWSClient(cfg);
   const botOpenId = await fetchBotOpenId(client);
-  console.error(`[master] bot open_id=${botOpenId || '(unknown)'}`);
+  rootLogger.info(`Feishu bot open_id=${botOpenId || '(unknown)'}`);
+
+  const inboundLog = rootLogger.child('inbound');
 
   const dispatcher = new Lark.EventDispatcher({}).register({
     'im.message.receive_v1': async (data: any) => {
       try {
         await handleInbound(data);
-      } catch (err) {
-        console.error('[master] handler error:', err);
+      } catch (err: any) {
+        inboundLog.error(`handler error: ${err?.message ?? err}`);
       }
     },
   });
 
   async function handleInbound(data: any): Promise<void> {
     const { message, sender } = data;
-    if (!message) return;
+    if (!message) {
+      inboundLog.warn(`event has no message field; ignoring`);
+      return;
+    }
     const messageId: string = message.message_id ?? '';
     const chatId: string = message.chat_id ?? '';
     const chatType: string = message.chat_type ?? '';
@@ -138,22 +154,37 @@ export async function startMaster(): Promise<void> {
     const mentions: any[] = message.mentions ?? [];
     const senderId: string = sender?.sender_id?.open_id ?? '';
 
-    if (!messageId || !chatId || !senderId) return;
-    if (senderId === botOpenId) return;
-    if (dedup.seen(messageId)) return;
+    inboundLog.info(`event messageId=${messageId} chat=${chatId} chatType=${chatType} type=${messageType} sender=${senderId} threadId=${threadId ?? '-'} mentions=${mentions.length} contentLen=${rawContent.length}`);
+
+    if (!messageId || !chatId || !senderId) {
+      inboundLog.warn(`drop: missing required id(s) messageId=${messageId} chat=${chatId} sender=${senderId}`);
+      return;
+    }
+    if (senderId === botOpenId) {
+      inboundLog.debug(`drop: bot's own message`);
+      return;
+    }
+    if (dedup.seen(messageId)) {
+      inboundLog.debug(`drop: duplicate messageId=${messageId}`);
+      return;
+    }
 
     if (!passesWhitelist(senderId, chatId, cfg.allowedUserIds, cfg.allowedChatIds)) {
-      console.error(`[master] whitelist drop user=${senderId} chat=${chatId}`);
+      inboundLog.info(`drop: whitelist user=${senderId} chat=${chatId}`);
       return;
     }
     // 群聊：要求 @bot 提及
     if (chatType === 'group') {
-      if (!botOpenId) { /* without botOpenId, accept any mention */ }
-      else {
+      if (!botOpenId) {
+        inboundLog.warn(`group message accepted despite no botOpenId (cannot verify @mention)`);
+      } else {
         const botMentioned = mentions.some(
           (m: any) => (m.id?.open_id ?? m.id?.union_id) === botOpenId,
         );
-        if (!botMentioned) return;
+        if (!botMentioned) {
+          inboundLog.debug(`drop: group message without @bot mentions=${mentions.length}`);
+          return;
+        }
       }
     }
 
@@ -204,23 +235,26 @@ export async function startMaster(): Promise<void> {
 
     // 解析 scope
     const scopeKey = resolveScopeKey({ chatId, threadId }, cfg.scopeMode);
+    inboundLog.info(`scope resolved scopeKey=${scopeKey} mode=${cfg.scopeMode}`);
 
     // 确保 tmux + child 就绪
     const entry = await pool.ensure(scopeKey);
     if (!entry) {
-      console.error(`[master] pool.ensure failed for scope=${scopeKey}`);
+      inboundLog.error(`pool.ensure failed scope=${scopeKey} — channel cannot deliver`);
       return;
     }
     pool.incMsg(scopeKey);
+    inboundLog.debug(`pool.ensure OK tmux=${entry.tmuxSession}`);
 
     // 加载（并可能初始化背景信息的）会话
     const session = store.getByScopeKey(scopeKey);
     if (!session) {
-      console.error(`[master] missing session for scope=${scopeKey} after ensure`);
+      inboundLog.error(`missing session after ensure scope=${scopeKey}`);
       return;
     }
 
     if (!session.rootInjected) {
+      inboundLog.info(`first message for scope=${scopeKey}; fetching background...`);
       let background: string | null = null;
       if (cfg.scopeMode === 'thread' && threadId) {
         background = await resolveThreadBackground(
@@ -238,7 +272,10 @@ export async function startMaster(): Promise<void> {
       session.rootInjected = true;
       store.save(session);
       if (background) {
+        inboundLog.info(`pushing background len=${background.length} scope=${scopeKey}`);
         bridge.push(scopeKey, background, { kind: 'background', scope_key: scopeKey });
+      } else {
+        inboundLog.info(`no background available scope=${scopeKey}`);
       }
     }
 
@@ -263,18 +300,20 @@ export async function startMaster(): Promise<void> {
     session.lastUserInput = text;
     store.save(session);
 
-    bridge.push(scopeKey, text, meta);
-    console.error(`[master] pushed scope=${scopeKey} len=${text.length}`);
+    const pushed = bridge.push(scopeKey, text, meta);
+    inboundLog.info(`push result=${pushed ? 'OK' : 'FAILED'} scope=${scopeKey} textLen=${text.length} imagePath=${imagePath ?? '-'} imagePaths=${imagePaths?.length ?? 0} attachments=${attachments.length}`);
   }
 
   wsClient.start({ eventDispatcher: dispatcher });
+  rootLogger.info(`Feishu WS started`);
 
   // 生命周期管理
   const shutdown = async () => {
-    console.error('[master] shutting down');
+    rootLogger.info('shutdown begin');
     await pool.stop();
     await bridge.stop();
     try { (wsClient as any).close?.(); } catch {/* ignore */}
+    rootLogger.info('shutdown complete');
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);

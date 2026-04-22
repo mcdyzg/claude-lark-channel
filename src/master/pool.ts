@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { SessionStore, Session } from '../shared/session-store.js';
 import type { BridgeServer, ChildConn } from './bridge-server.js';
 import type { AppConfig } from '../shared/config.js';
+import type { Logger } from '../shared/logger.js';
 
 export interface PoolEntry {
   scopeKey: string;
@@ -20,6 +21,7 @@ export interface PoolDeps {
   store: SessionStore;
   bridge: BridgeServer;
   pluginRoot: string;
+  logger: Logger;
 }
 
 export class TmuxPool {
@@ -31,17 +33,23 @@ export class TmuxPool {
   constructor(private readonly deps: PoolDeps) {}
 
   start(): void {
+    const lg = this.deps.logger;
     // 清理上次运行残留的 lark-* tmux 会话
     try {
       const raw = execSync('tmux ls 2>/dev/null || true', { encoding: 'utf-8' });
+      let killed = 0;
       for (const line of raw.split('\n')) {
         const name = line.split(':')[0];
         if (name && name.startsWith('lark-')) {
           try { execSync(`tmux kill-session -t ${shellQuote(name)}`); } catch {/* ignore */}
-          console.error(`[pool] killed residual tmux ${name}`);
+          lg.info(`killed residual tmux=${name}`);
+          killed++;
         }
       }
-    } catch {/* ignore */}
+      lg.info(`start: cleared ${killed} residual lark-* tmux sessions; maxScopes=${this.deps.config.maxScopes} idleTtlMs=${this.deps.config.idleTtlMs} sweepMs=${this.deps.config.sweepMs}`);
+    } catch (err: any) {
+      lg.warn(`start: residual cleanup failed: ${err?.message ?? err}`);
+    }
 
     this.sweeperHandle = setInterval(() => this.sweep(), this.deps.config.sweepMs);
   }
@@ -51,9 +59,13 @@ export class TmuxPool {
     const entry = this.entries.get(conn.scopeKey);
     if (entry) {
       entry.childConn = conn;
+      this.deps.logger.info(`child connected → pool entry updated scope=${conn.scopeKey} tmux=${entry.tmuxSession}`);
+    } else {
+      this.deps.logger.warn(`child connected but no pool entry for scope=${conn.scopeKey}`);
     }
     const waiters = this.waitingHello.get(conn.scopeKey);
     if (waiters) {
+      this.deps.logger.debug(`resolving ${waiters.length} hello waiter(s) for scope=${conn.scopeKey}`);
       for (const w of waiters) w(true);
       this.waitingHello.delete(conn.scopeKey);
     }
@@ -62,7 +74,10 @@ export class TmuxPool {
   /** 由 master 在子进程 socket 断开时调用 */
   markChildDisconnected(scopeKey: string): void {
     const entry = this.entries.get(scopeKey);
-    if (entry) entry.childConn = null;
+    if (entry) {
+      entry.childConn = null;
+      this.deps.logger.warn(`child disconnected scope=${scopeKey}; entry kept for potential reconnect`);
+    }
   }
 
   /**
@@ -70,29 +85,38 @@ export class TmuxPool {
    * 返回就绪的 entry，超时或启动失败时返回 null。
    */
   async ensure(scopeKey: string): Promise<PoolEntry | null> {
-    if (this.shuttingDown) return null;
+    const lg = this.deps.logger;
+    if (this.shuttingDown) {
+      lg.warn(`ensure denied (shutting down) scope=${scopeKey}`);
+      return null;
+    }
 
     const hit = this.entries.get(scopeKey);
     if (hit?.childConn) {
       hit.lastActiveAt = Date.now();
+      lg.debug(`ensure hit: scope=${scopeKey} tmux=${hit.tmuxSession} already connected`);
       return hit;
     }
     if (hit && !hit.childConn) {
+      lg.info(`ensure: entry exists but child not yet connected scope=${scopeKey}; waiting for hello`);
       const ok = await this.waitForHello(scopeKey);
       if (!ok) {
-        // 超时：销毁后重建
+        lg.warn(`ensure: existing entry hello timeout scope=${scopeKey}; will rebuild`);
         this.killEntry(scopeKey);
       } else {
         hit.lastActiveAt = Date.now();
+        lg.info(`ensure: existing entry became ready scope=${scopeKey}`);
         return hit;
       }
     }
 
     // 容量检查
     if (this.entries.size >= this.deps.config.maxScopes) {
+      lg.warn(`ensure: pool at capacity (${this.entries.size}/${this.deps.config.maxScopes}); evicting LRU`);
       this.evictLRU();
     }
 
+    lg.info(`ensure: spawning fresh scope=${scopeKey}`);
     return this.attemptSpawn(scopeKey, /*allowResumeRetry*/ true);
   }
 
@@ -104,9 +128,11 @@ export class TmuxPool {
    * - 否则直接返回 null。
    */
   private async attemptSpawn(scopeKey: string, allowResumeRetry: boolean): Promise<PoolEntry | null> {
+    const lg = this.deps.logger;
     const session = this.deps.store.getOrCreate(scopeKey, this.deps.config.defaultWorkDir);
     const hadResumeId = !!session.claudeSessionId;
     const tmuxSession = `lark-${session.id}`;
+    lg.info(`attemptSpawn scope=${scopeKey} scopeId=${session.id} tmux=${tmuxSession} workDir=${session.workDir} resumeId=${session.claudeSessionId || '<fresh>'} allowResumeRetry=${allowResumeRetry}`);
     const entry: PoolEntry = {
       scopeKey,
       scopeId: session.id,
@@ -120,19 +146,25 @@ export class TmuxPool {
 
     const ok = this.spawnTmux(session, tmuxSession);
     if (!ok) {
+      lg.error(`spawnTmux failed scope=${scopeKey}; dropping entry`);
       this.entries.delete(scopeKey);
       return null;
     }
 
+    lg.info(`awaiting hello scope=${scopeKey} timeoutMs=${this.deps.config.helloTimeoutMs}`);
     const ready = await this.waitForHello(scopeKey);
-    if (ready) return entry;
+    if (ready) {
+      lg.info(`attemptSpawn OK scope=${scopeKey} tmux=${tmuxSession}`);
+      return entry;
+    }
 
     // hello 超时。如果之前尝试了 --resume，大概率是 session id 损坏（比如
     // claude 上次根本没把 jsonl 写盘就退了）。清掉 claudeSessionId + 重置
     // rootInjected，然后按全新 session 再拉一次。
+    lg.warn(`hello TIMEOUT scope=${scopeKey} (waited ${this.deps.config.helloTimeoutMs}ms)`);
     this.killEntry(scopeKey);
     if (allowResumeRetry && hadResumeId) {
-      console.error(`[pool] hello timeout with --resume=${session.claudeSessionId}; clearing and retrying fresh for scope=${scopeKey}`);
+      lg.warn(`resume id=${session.claudeSessionId} suspected stale; clearing & retrying fresh scope=${scopeKey}`);
       const fresh = this.deps.store.getByScopeKey(scopeKey);
       if (fresh) {
         fresh.claudeSessionId = '';
@@ -141,6 +173,7 @@ export class TmuxPool {
       }
       return this.attemptSpawn(scopeKey, /*allowResumeRetry*/ false);
     }
+    lg.error(`attemptSpawn gave up scope=${scopeKey}`);
     return null;
   }
 
@@ -167,6 +200,7 @@ export class TmuxPool {
   }
 
   private spawnTmux(session: Session, tmuxSession: string): boolean {
+    const lg = this.deps.logger;
     const resumeArg = session.claudeSessionId ? `--resume ${shellQuote(session.claudeSessionId)}` : '';
     const cmd = `claude ${resumeArg}`.trim();
 
@@ -179,14 +213,16 @@ export class TmuxPool {
       '-e', `LARK_CHANNEL_SCOPE_KEY=${session.scopeKey}`,
       '-e', `LARK_CHANNEL_SOCK=${this.deps.config.socketPath}`,
       '-e', `LARK_CHANNEL_STORE=${this.deps.config.storeDir}`,
+      `-e`, `LARK_CHANNEL_LOG_LEVEL=${this.deps.config.logLevel}`,
       cmd,
     ];
+    lg.info(`spawnTmux cmd="tmux ${args.join(' ')}"`);
     const res = spawnSync('tmux', args, { stdio: 'pipe', encoding: 'utf-8' });
     if (res.status !== 0) {
-      console.error(`[pool] tmux new-session failed: ${res.stderr}`);
+      lg.error(`tmux new-session status=${res.status} stderr=${(res.stderr ?? '').trim()}`);
       return false;
     }
-    console.error(`[pool] spawned tmux=${tmuxSession} scope=${session.scopeKey}`);
+    lg.info(`spawnTmux OK tmux=${tmuxSession} scope=${session.scopeKey}`);
     return true;
   }
 
@@ -196,7 +232,7 @@ export class TmuxPool {
     try { entry.childConn?.close(); } catch {/* ignore */}
     try { execSync(`tmux kill-session -t ${shellQuote(entry.tmuxSession)}`); } catch {/* ignore */}
     this.entries.delete(scopeKey);
-    console.error(`[pool] killed ${entry.tmuxSession} scope=${scopeKey}`);
+    this.deps.logger.info(`killEntry tmux=${entry.tmuxSession} scope=${scopeKey}`);
   }
 
   private evictLRU(): void {
@@ -205,23 +241,30 @@ export class TmuxPool {
       if (!oldest || e.lastActiveAt < oldest.lastActiveAt) oldest = e;
     }
     if (oldest) {
-      console.error(`[pool] evicting LRU scope=${oldest.scopeKey}`);
+      this.deps.logger.info(`evicting LRU scope=${oldest.scopeKey} lastActive=${new Date(oldest.lastActiveAt).toISOString()}`);
       this.killEntry(oldest.scopeKey);
     }
   }
 
   private sweep(): void {
     const now = Date.now();
+    const reaped: string[] = [];
     for (const e of [...this.entries.values()]) {
       if (now - e.lastActiveAt > this.deps.config.idleTtlMs) {
-        console.error(`[pool] reaping idle scope=${e.scopeKey}`);
+        reaped.push(e.scopeKey);
         this.killEntry(e.scopeKey);
       }
+    }
+    if (reaped.length > 0) {
+      this.deps.logger.info(`sweep reaped ${reaped.length} idle scope(s): ${reaped.join(',')}`);
+    } else {
+      this.deps.logger.debug(`sweep: 0 idle scopes`);
     }
   }
 
   async stop(): Promise<void> {
     this.shuttingDown = true;
+    this.deps.logger.info(`pool stop; entries=${this.entries.size}`);
     if (this.sweeperHandle) clearInterval(this.sweeperHandle);
     for (const key of [...this.entries.keys()]) this.killEntry(key);
   }
