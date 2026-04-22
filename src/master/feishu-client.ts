@@ -48,11 +48,18 @@ export async function fetchBotOpenId(client: Lark.Client): Promise<string> {
   }
 }
 
+export interface ThreadRoot {
+  messageId: string;
+  text: string;
+  imageKeys: string[];
+  createTime: number;
+}
+
 /** Fetch the first message of a thread (the root). */
 export async function fetchThreadRoot(
   client: Lark.Client,
   threadId: string,
-): Promise<{ messageId: string; text: string; createTime: number } | null> {
+): Promise<ThreadRoot | null> {
   if (!threadId) return null;
   try {
     const resp: any = await client.im.message.list({
@@ -68,12 +75,15 @@ export async function fetchThreadRoot(
     const root = items[0];
     const msgType = root.msg_type ?? 'text';
     const raw = root.body?.content ?? '';
-    const { extractPlainText } = await import('./message-parser.js');
+    const { extractPlainText, extractImageKeys } = await import('./message-parser.js');
     const text = extractPlainText(msgType, raw);
+    const imageKeys = extractImageKeys(msgType, raw);
+    const createTime = root.create_time ? parseInt(String(root.create_time), 10) : Date.now();
     return {
       messageId: root.message_id ?? '',
       text,
-      createTime: root.create_time ? parseInt(String(root.create_time), 10) : Date.now(),
+      imageKeys,
+      createTime: Number.isFinite(createTime) ? createTime : Date.now(),
     };
   } catch (err) {
     console.error('[feishu] fetchThreadRoot failed:', err);
@@ -118,4 +128,46 @@ export async function fetchChatHistory(
 function displayAlias(id: string): string {
   if (!id) return 'unknown';
   return `user_${id.slice(-7)}`;
+}
+
+/**
+ * 拉单条消息（用于处理 parent_id 引用回复）。
+ * 失败统一返回 null，调用方做降级。
+ */
+export interface FetchedMessage {
+  messageId: string;
+  text: string;
+  imageKeys: string[];
+  createTime: number;
+}
+
+export async function fetchMessage(
+  client: Lark.Client,
+  messageId: string,
+): Promise<FetchedMessage | null> {
+  if (!messageId) return null;
+  try {
+    const resp: any = await client.im.v1.message.get({
+      path: { message_id: messageId },
+    } as any);
+    const item = resp?.data?.items?.[0];
+    if (!item) return null;
+    const msgType = item.msg_type ?? 'text';
+    const raw = item.body?.content ?? '';
+    const { extractPlainText, extractImageKeys } = await import('./message-parser.js');
+    const text = extractPlainText(msgType, raw);
+    const imageKeys = extractImageKeys(msgType, raw);
+    const createTime = item.create_time
+      ? parseInt(String(item.create_time), 10)
+      : Date.now();
+    return {
+      messageId: item.message_id ?? messageId,
+      text,
+      imageKeys,
+      createTime: Number.isFinite(createTime) ? createTime : Date.now(),
+    };
+  } catch (err) {
+    console.error('[feishu] fetchMessage failed:', err);
+    return null;
+  }
 }
