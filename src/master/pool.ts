@@ -202,7 +202,21 @@ export class TmuxPool {
   private spawnTmux(session: Session, tmuxSession: string): boolean {
     const lg = this.deps.logger;
     const resumeArg = session.claudeSessionId ? `--resume ${shellQuote(session.claudeSessionId)}` : '';
-    const cmd = `claude ${resumeArg}`.trim();
+
+    // 两个关键 flag（参考 claude-lark-plugin README + 官方 channels 文档）：
+    //
+    // --dangerously-load-development-channels plugin:lark-channel@claude-lark-channel
+    //   开启我们这个 plugin 的 channel 订阅。普通 MCP server 是不会消费
+    //   `notifications/claude/channel` 的，必须通过 --channels 或这个 dev
+    //   flag 激活（研究预览期间自建 plugin 不在 Anthropic 允许列表里，只能
+    //   走 dev flag）。
+    //
+    // --dangerously-skip-permissions
+    //   spawn 出来的 claude 没有人坐在键盘前审批工具调用。permission prompt
+    //   会让会话死锁。该 flag 自动通过所有 prompt。
+    const channelArg = `--dangerously-load-development-channels plugin:lark-channel@claude-lark-channel`;
+    const permArg = `--dangerously-skip-permissions`;
+    const cmd = `claude ${channelArg} ${permArg} ${resumeArg}`.trim().replace(/ +/g, ' ');
 
     // 使用 spawnSync 避免继承 TTY；环境变量通过独立 -e 参数传入
     const args = [
