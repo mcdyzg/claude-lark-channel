@@ -34,6 +34,6 @@ export async function tryAcquireLock(lockPath: string): Promise<boolean> {
 function registerCleanup(lockPath: string): void {
   const cleanup = () => { try { fs.unlinkSync(lockPath); } catch {/* ignore */} };
   process.once('exit', cleanup);
-  process.once('SIGINT', () => { cleanup(); process.exit(0); });
-  process.once('SIGTERM', () => { cleanup(); process.exit(0); });
+  // NOTE: 信号处理由 master 负责；此处只在 exit 事件清理锁文件
+  // (exit 事件在所有信号处理器及 process.exit 调用完成后才触发)
 }
