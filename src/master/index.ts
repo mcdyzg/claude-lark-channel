@@ -16,7 +16,7 @@ import {
   fetchThreadRoot,
   fetchChatHistory,
 } from './feishu-client.js';
-import { extractPlainText, extractAttachments } from './message-parser.js';
+import { extractPlainText, extractAttachments, extractImageKeys } from './message-parser.js';
 import { Dedup } from './dedup.js';
 import { passesWhitelist } from './whitelist.js';
 import { doReply, sendAckReaction, revokeReaction, type ReplyParams } from './reply.js';
@@ -204,33 +204,22 @@ export async function startMaster(): Promise<void> {
     const text = extractPlainText(messageType, rawContent);
     const attachments = extractAttachments({ message_type: messageType, content: rawContent });
 
-    // 同步下载图片到 inbox
+    // 同步下载本消息的图片到 inbox
     let imagePath: string | undefined;
     let imagePaths: string[] | undefined;
-    if (messageType === 'image') {
-      try {
-        const parsed = JSON.parse(rawContent);
-        if (parsed.image_key) {
-          const d = await downloadAttachment(client, messageId, parsed.image_key, 'image', cfg.inboxDir);
-          imagePath = d.path;
+    {
+      const ownImageKeys = extractImageKeys(messageType, rawContent);
+      const downloaded: string[] = [];
+      for (const key of ownImageKeys) {
+        try {
+          const d = await downloadAttachment(client, messageId, key, 'image', cfg.inboxDir);
+          downloaded.push(d.path);
+        } catch (err: any) {
+          inboundLog.warn(`own image download failed key=${key} err=${err?.message ?? err}`);
         }
-      } catch {/* ignore */}
-    } else if (messageType === 'post') {
-      try {
-        const parsed = JSON.parse(rawContent);
-        const content = parsed.content ?? parsed.zh_cn?.content ?? parsed.en_us?.content ?? [];
-        const downloaded: string[] = [];
-        for (const line of content) {
-          for (const node of line as any[]) {
-            if (node.tag === 'img' && node.image_key) {
-              const d = await downloadAttachment(client, messageId, node.image_key, 'image', cfg.inboxDir);
-              downloaded.push(d.path);
-            }
-          }
-        }
-        if (downloaded.length === 1) imagePath = downloaded[0];
-        else if (downloaded.length > 1) imagePaths = downloaded;
-      } catch {/* ignore */}
+      }
+      if (downloaded.length === 1) imagePath = downloaded[0];
+      else if (downloaded.length > 1) imagePaths = downloaded;
     }
 
     // 解析 scope
@@ -255,15 +244,23 @@ export async function startMaster(): Promise<void> {
 
     if (!session.rootInjected) {
       inboundLog.info(`first message for scope=${scopeKey}; fetching background...`);
-      let background: string | null = null;
+      let threadBg: Awaited<ReturnType<typeof resolveThreadBackground>> = null;
+      let chatBgText: string | null = null;
+      let rootMessageId: string | null = null;
+
       if (cfg.scopeMode === 'thread' && threadId) {
-        background = await resolveThreadBackground(
+        // 记下 root 的 messageId 供后续下载图片使用
+        threadBg = await resolveThreadBackground(
           { chatId, threadId, messageId },
           cfg.scopeMode,
-          (tid) => fetchThreadRoot(client, tid),
+          async (tid) => {
+            const root = await fetchThreadRoot(client, tid);
+            if (root) rootMessageId = root.messageId;
+            return root;
+          },
         );
       } else {
-        background = await resolveChatHistoryBackground(
+        chatBgText = await resolveChatHistoryBackground(
           chatId,
           (cid, limit) => fetchChatHistory(client, cid, limit),
           { limit: CHAT_HISTORY_LIMIT, selfOpenId: botOpenId },
@@ -271,9 +268,31 @@ export async function startMaster(): Promise<void> {
       }
       session.rootInjected = true;
       store.save(session);
-      if (background) {
-        inboundLog.info(`pushing background len=${background.length} scope=${scopeKey}`);
-        bridge.push(scopeKey, background, { kind: 'background', scope_key: scopeKey });
+
+      if (threadBg) {
+        // 下载 root 里附带的图片
+        const rootImagePaths: string[] = [];
+        if (rootMessageId && threadBg.imageKeys.length > 0) {
+          for (const key of threadBg.imageKeys) {
+            try {
+              const d = await downloadAttachment(client, rootMessageId, key, 'image', cfg.inboxDir);
+              rootImagePaths.push(d.path);
+            } catch (err: any) {
+              inboundLog.warn(`root image download failed key=${key} err=${err?.message ?? err}`);
+            }
+          }
+        }
+        const bgMeta: Record<string, unknown> = {
+          kind: 'background',
+          scope_key: scopeKey,
+        };
+        if (rootImagePaths.length === 1) bgMeta.image_path = rootImagePaths[0];
+        else if (rootImagePaths.length > 1) bgMeta.image_paths = rootImagePaths.join(',');
+        inboundLog.info(`pushing thread background len=${threadBg.text.length} rootImages=${rootImagePaths.length} scope=${scopeKey}`);
+        bridge.push(scopeKey, threadBg.text, bgMeta);
+      } else if (chatBgText) {
+        inboundLog.info(`pushing chat history background len=${chatBgText.length} scope=${scopeKey}`);
+        bridge.push(scopeKey, chatBgText, { kind: 'background', scope_key: scopeKey });
       } else {
         inboundLog.info(`no background available scope=${scopeKey}`);
       }
