@@ -29,3 +29,11 @@ Manual checks. Use a test Feishu app with a dedicated bot.
 ## Cleanup
 - `tmux kill-server` (or just `tmux ls | grep ^lark- | awk -F: '{print $1}' | xargs -I {} tmux kill-session -t {}`)
 - Delete `~/.claude/channels/lark-channel/sessions/` to reset all scope state
+
+## Thread / parent context images (spec 2026-04-22)
+
+- [ ] **Thread root image**: in a group chat (whitelisted), create a new thread by posting an image + text caption as the thread root. In the same thread, reply `@bot 分析下这张图` (no quote-reply). Expect: Claude's reply references the image's content (proving it read `image_path` from the background frame).
+- [ ] **Quote-reply with image**: in any chat, find a prior message containing an image, quote-reply it and include `@bot 看一下这张图`. Expect: Claude's reply references the parent image.
+- [ ] **Quote-reply with text only**: quote-reply a text-only prior message and `@bot`. Expect: Claude reply references the parent's text (via `parent_content`).
+- [ ] **Regression — thread without images**: start a new thread with text-only root, `@bot` there. Expect: unchanged behaviour (background frame with text, no `image_path` meta).
+- [ ] **Regression — plain P2P, no parent**: DM the bot plain text. Expect: unchanged behaviour (no parent_* meta).
