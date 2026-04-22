@@ -268,9 +268,6 @@ export async function startMaster(): Promise<void> {
           { limit: CHAT_HISTORY_LIMIT, selfOpenId: botOpenId },
         );
       }
-      session.rootInjected = true;
-      store.save(session);
-
       if (threadBg) {
         // 下载 root 里附带的图片
         const rootImagePaths: string[] = [];
@@ -298,6 +295,12 @@ export async function startMaster(): Promise<void> {
       } else {
         inboundLog.info(`no background available scope=${scopeKey}`);
       }
+
+      // 在 push（或无背景的 no-op）完成之后再持久化 rootInjected。
+      // 若在图片下载期间崩溃，下次启动时 rootInjected 仍为 false，
+      // 可以重新执行 bootstrap；即使无背景也需要标记为 true，避免无限重试。
+      session.rootInjected = true;
+      store.save(session);
     }
 
     // 若事件带 parent_id（引用回复），拉 parent 消息的文本 + 图片，
