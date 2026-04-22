@@ -15,6 +15,7 @@ import {
   fetchBotOpenId,
   fetchThreadRoot,
   fetchChatHistory,
+  fetchMessage,
 } from './feishu-client.js';
 import { extractPlainText, extractAttachments, extractImageKeys } from './message-parser.js';
 import { Dedup } from './dedup.js';
@@ -151,6 +152,7 @@ export async function startMaster(): Promise<void> {
     const rawContent: string = message.content ?? '';
     const messageType: string = message.message_type ?? message.msg_type ?? 'text';
     const threadId: string | undefined = message.root_id || undefined;
+    const parentId: string | undefined = message.parent_id || undefined;
     const mentions: any[] = message.mentions ?? [];
     const senderId: string = sender?.sender_id?.open_id ?? '';
 
@@ -298,6 +300,37 @@ export async function startMaster(): Promise<void> {
       }
     }
 
+    // 若事件带 parent_id（引用回复），拉 parent 消息的文本 + 图片，
+    // 作为 meta 里的 parent_* 字段传给 Claude
+    let parentContent: string | null = null;
+    let parentImagePath: string | undefined;
+    let parentImagePaths: string[] | undefined;
+    let parentMessageIdResolved: string | undefined;
+    if (parentId) {
+      inboundLog.info(`fetching parent messageId=${parentId}`);
+      const parent = await fetchMessage(client, parentId);
+      if (parent) {
+        parentMessageIdResolved = parent.messageId;
+        parentContent = parent.text;
+        if (parent.imageKeys.length > 0) {
+          const downloaded: string[] = [];
+          for (const key of parent.imageKeys) {
+            try {
+              const d = await downloadAttachment(client, parent.messageId, key, 'image', cfg.inboxDir);
+              downloaded.push(d.path);
+            } catch (err: any) {
+              inboundLog.warn(`parent image download failed key=${key} err=${err?.message ?? err}`);
+            }
+          }
+          if (downloaded.length === 1) parentImagePath = downloaded[0];
+          else if (downloaded.length > 1) parentImagePaths = downloaded;
+        }
+        inboundLog.info(`parent resolved textLen=${parentContent.length} imageCount=${parent.imageKeys.length} downloaded=${(parentImagePaths?.length ?? (parentImagePath ? 1 : 0))}`);
+      } else {
+        inboundLog.warn(`fetchMessage returned null for parent messageId=${parentId}`);
+      }
+    }
+
     // 构建 meta 并推送
     const meta: Record<string, unknown> = {
       chat_id: chatId,
@@ -315,12 +348,18 @@ export async function startMaster(): Promise<void> {
       meta.attachment_file_id = attachments[0].fileKey;
       meta.attachment_name = attachments[0].fileName;
     }
+    if (parentMessageIdResolved) {
+      meta.parent_message_id = parentMessageIdResolved;
+      meta.parent_content = parentContent ?? '';
+      if (parentImagePath) meta.parent_image_path = parentImagePath;
+      if (parentImagePaths?.length) meta.parent_image_paths = parentImagePaths.join(',');
+    }
 
     session.lastUserInput = text;
     store.save(session);
 
     const pushed = bridge.push(scopeKey, text, meta);
-    inboundLog.info(`push result=${pushed ? 'OK' : 'FAILED'} scope=${scopeKey} textLen=${text.length} imagePath=${imagePath ?? '-'} imagePaths=${imagePaths?.length ?? 0} attachments=${attachments.length}`);
+    inboundLog.info(`push result=${pushed ? 'OK' : 'FAILED'} scope=${scopeKey} textLen=${text.length} imagePath=${imagePath ?? '-'} imagePaths=${imagePaths?.length ?? 0} parentImages=${(parentImagePaths?.length ?? (parentImagePath ? 1 : 0))} attachments=${attachments.length}`);
   }
 
   wsClient.start({ eventDispatcher: dispatcher });
