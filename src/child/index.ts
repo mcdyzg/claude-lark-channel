@@ -13,16 +13,18 @@ export async function startChild(): Promise<void> {
   const store = process.env.LARK_CHANNEL_STORE
     ?? path.join(os.homedir(), '.claude', 'channels', 'lark-channel');
   const rpcTimeoutMs = parseInt(process.env.LARK_CHANNEL_RPC_TIMEOUT_MS ?? '60000', 10);
-  const logLevel = (process.env.LARK_CHANNEL_LOG_LEVEL as 'error'|'warn'|'info'|'debug') ?? 'info';
+  const debug = process.env.LARK_CHANNEL_DEBUG === '1';
 
   const logsDir = path.join(store, 'logs');
-  const logger = createRootLogger(`child[${scopeKey}]`, logsDir, logLevel);
+  const logger = createRootLogger(`child[${scopeKey}]`, logsDir, debug);
 
   if (!scopeKey || !scopeId || !sock) {
     logger.error(`missing env: SCOPE_KEY=${scopeKey} SCOPE_ID=${scopeId} SOCK=${sock}`);
+    // 关键路径错误：即使 debug=off 也写 stderr（容器外可能被 MCP 宿主捕获）
+    if (!debug) console.error(`[child] missing env: SCOPE_KEY=${scopeKey} SCOPE_ID=${scopeId} SOCK=${sock}`);
     process.exit(1);
   }
-  logger.info(`starting scope=${scopeKey} scopeId=${scopeId} sock=${sock} logLevel=${logLevel}`);
+  logger.info(`starting scope=${scopeKey} scopeId=${scopeId} sock=${sock} debug=${debug}`);
 
   const server = new McpServer(
     { name: 'claude-lark-channel', version: '0.1.0' },

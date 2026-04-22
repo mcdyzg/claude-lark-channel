@@ -3,24 +3,22 @@ import path from 'node:path';
 
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
 
-const RANK: Record<LogLevel, number> = { error: 0, warn: 1, info: 2, debug: 3 };
-
 /**
- * 统一日志器：所有级别都写到文件（供事后排查）；
- * stderr 只输出 >= stderrLevel 的（保持 MCP stdout 干净，减少噪音）。
+ * 单一开关的日志器：
+ * - debug=false → 所有级别全部 no-op（不写 stderr、不写文件）
+ * - debug=true  → 所有级别写入 debug.log，同时在 stderr 输出（方便 MCP 宿主捕获）
  *
- * 文件追加写（同步 append，短行原子），master/child 共享一个 debug.log
- * 便于跨进程按时间轴对齐。
+ * master/child 共享同一个 debug.log，便于跨进程按时间轴对齐。
  */
 export class Logger {
   constructor(
     private readonly tag: string,
     private readonly logFile: string | null,
-    private readonly stderrLevel: LogLevel = 'info',
+    private readonly enabled: boolean,
   ) {}
 
   child(subTag: string): Logger {
-    return new Logger(`${this.tag}:${subTag}`, this.logFile, this.stderrLevel);
+    return new Logger(`${this.tag}:${subTag}`, this.logFile, this.enabled);
   }
 
   private format(level: LogLevel, args: unknown[]): string {
@@ -35,14 +33,11 @@ export class Logger {
   }
 
   private write(level: LogLevel, args: unknown[]): void {
+    if (!this.enabled) return;
     const line = this.format(level, args);
-    if (RANK[level] <= RANK[this.stderrLevel]) {
-      console.error(line);
-    }
+    console.error(line);
     if (this.logFile) {
-      try {
-        fs.appendFileSync(this.logFile, line + '\n');
-      } catch {/* disk full etc. silently degrade */}
+      try { fs.appendFileSync(this.logFile, line + '\n'); } catch {/* disk full / perms; ignore */}
     }
   }
 
@@ -53,13 +48,17 @@ export class Logger {
 }
 
 /**
- * 创建根 logger：日志文件位于 <logsDir>/debug.log；
- * 先确保目录存在；返回的 logger 可通过 .child(tag) 派生子 tag。
+ * 创建根 logger：
+ * - debug=false → 返回 no-op logger（不碰文件系统）
+ * - debug=true  → 确保 logsDir 存在，写入 <logsDir>/debug.log
  */
-export function createRootLogger(tag: string, logsDir: string, stderrLevel: LogLevel = 'info'): Logger {
+export function createRootLogger(tag: string, logsDir: string, debug: boolean): Logger {
+  if (!debug) {
+    return new Logger(tag, null, false);
+  }
   try { fs.mkdirSync(logsDir, { recursive: true }); } catch {/* ignore */}
   const logFile = path.join(logsDir, 'debug.log');
-  const lg = new Logger(tag, logFile, stderrLevel);
-  lg.info(`logger initialized file=${logFile} stderrLevel=${stderrLevel}`);
+  const lg = new Logger(tag, logFile, true);
+  lg.info(`logger initialized file=${logFile} debug=on`);
   return lg;
 }

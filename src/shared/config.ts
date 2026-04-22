@@ -1,89 +1,130 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import dotenv from 'dotenv';
 
 export type SessionScope = 'chat' | 'thread';
-export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
+
+/**
+ * 用户侧的 JSON 配置（~/.claude/channels/lark-channel/config.json）。
+ * 顶层扁平；所有字段 optional，未填时用默认值。
+ */
+export interface ConfigFile {
+  debug?: boolean;
+  feishu?: {
+    appId?: string;
+    appSecret?: string;
+    domain?: 'feishu' | 'lark';
+  };
+  whitelist?: {
+    users?: string[];
+    chats?: string[];
+  };
+  scope?: {
+    mode?: SessionScope;
+    defaultWorkDir?: string;
+  };
+  pool?: {
+    maxScopes?: number;
+    idleTtlMs?: number;
+    sweepMs?: number;
+  };
+  timeouts?: {
+    helloMs?: number;
+    rpcMs?: number;
+    dedupMs?: number;
+  };
+  ackEmoji?: string;
+}
 
 export interface AppConfig {
-  // Feishu
+  // 运行时开关
+  debug: boolean;
+  // Feishu 凭据
   appId: string;
   appSecret: string;
   domain: 'feishu' | 'lark';
-  // Whitelist
+  // 白名单
   allowedUserIds: string[];
   allowedChatIds: string[];
-  // Scope
+  // Scope 隔离
   scopeMode: SessionScope;
   defaultWorkDir: string;
-  // Pool
+  // tmux 池
   maxScopes: number;
   idleTtlMs: number;
   sweepMs: number;
-  // Timeouts
+  // 超时
   helloTimeoutMs: number;
   rpcTimeoutMs: number;
   dedupTtlMs: number;
-  // Ack
+  // Ack 表情
   ackEmoji: string;
-  // Runtime
-  logLevel: LogLevel;
-  // Derived paths
+  // 派生路径
   storeDir: string;
+  configPath: string;
   sessionsDir: string;
   inboxDir: string;
   socketPath: string;
   logsDir: string;
 }
 
-function parseList(v: string | undefined): string[] {
-  if (!v) return [];
-  return v.split(',').map(s => s.trim()).filter(Boolean);
-}
+const DEFAULTS = {
+  domain: 'feishu' as const,
+  scopeMode: 'thread' as SessionScope,
+  maxScopes: 50,
+  idleTtlMs: 14_400_000, // 4h
+  sweepMs: 300_000,      // 5min
+  helloTimeoutMs: 15_000,
+  rpcTimeoutMs: 60_000,
+  dedupTtlMs: 60_000,
+  ackEmoji: 'MeMeMe',
+};
 
-function parseInt10(v: string | undefined, fallback: number): number {
-  if (!v) return fallback;
-  const n = parseInt(v, 10);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-export function loadConfig(envPath?: string): AppConfig {
+/**
+ * 加载配置。优先读 config.json，读不到/解析失败时返回默认值 + 空凭据。
+ * 调用方可用 validateMasterConfig() 检查凭据是否齐全。
+ */
+export function loadConfig(overrideConfigPath?: string): AppConfig {
   const storeDir = path.join(os.homedir(), '.claude', 'channels', 'lark-channel');
-  const envFile = envPath ?? path.join(storeDir, '.env');
-  if (fs.existsSync(envFile)) {
-    dotenv.config({ path: envFile });
-  }
-  const env = process.env;
+  const configPath = overrideConfigPath ?? path.join(storeDir, 'config.json');
 
-  const appId = env.LARK_APP_ID ?? '';
-  const appSecret = env.LARK_APP_SECRET ?? '';
-  const domainRaw = (env.LARK_DOMAIN ?? 'feishu').toLowerCase();
-  const domain: 'feishu' | 'lark' = domainRaw === 'lark' ? 'lark' : 'feishu';
-  const scopeRaw = (env.LARK_CHANNEL_SCOPE_MODE ?? 'thread').toLowerCase();
-  const scopeMode: SessionScope = scopeRaw === 'chat' ? 'chat' : 'thread';
-  const logRaw = (env.LARK_CHANNEL_LOG_LEVEL ?? 'info').toLowerCase();
-  const logLevel: LogLevel = (['error', 'warn', 'info', 'debug'] as const).includes(logRaw as LogLevel)
-    ? (logRaw as LogLevel)
-    : 'info';
+  let file: ConfigFile = {};
+  if (fs.existsSync(configPath)) {
+    try {
+      file = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    } catch (err) {
+      console.error(`[config] failed to parse ${configPath}:`, err);
+      file = {};
+    }
+  }
+
+  const feishu = file.feishu ?? {};
+  const whitelist = file.whitelist ?? {};
+  const scope = file.scope ?? {};
+  const pool = file.pool ?? {};
+  const timeouts = file.timeouts ?? {};
+
+  const domain: 'feishu' | 'lark' = feishu.domain === 'lark' ? 'lark' : DEFAULTS.domain;
+  const scopeMode: SessionScope = scope.mode === 'chat' ? 'chat' : DEFAULTS.scopeMode;
 
   return {
-    appId,
-    appSecret,
+    debug: file.debug === true,
+    appId: feishu.appId ?? '',
+    appSecret: feishu.appSecret ?? '',
     domain,
-    allowedUserIds: parseList(env.LARK_ALLOWED_USER_IDS),
-    allowedChatIds: parseList(env.LARK_ALLOWED_CHAT_IDS),
+    allowedUserIds: Array.isArray(whitelist.users) ? whitelist.users.filter(Boolean) : [],
+    allowedChatIds: Array.isArray(whitelist.chats) ? whitelist.chats.filter(Boolean) : [],
     scopeMode,
-    defaultWorkDir: env.LARK_CHANNEL_DEFAULT_WORKDIR || os.homedir(),
-    maxScopes: parseInt10(env.LARK_CHANNEL_MAX_SCOPES, 50),
-    idleTtlMs: parseInt10(env.LARK_CHANNEL_IDLE_TTL_MS, 14_400_000),
-    sweepMs: parseInt10(env.LARK_CHANNEL_SWEEP_MS, 300_000),
-    helloTimeoutMs: parseInt10(env.LARK_CHANNEL_HELLO_TIMEOUT_MS, 15_000),
-    rpcTimeoutMs: parseInt10(env.LARK_CHANNEL_RPC_TIMEOUT_MS, 60_000),
-    dedupTtlMs: parseInt10(env.LARK_CHANNEL_DEDUP_TTL_MS, 60_000),
-    ackEmoji: env.LARK_ACK_EMOJI ?? 'MeMeMe',
-    logLevel,
+    defaultWorkDir: scope.defaultWorkDir || os.homedir(),
+    maxScopes: Number.isFinite(pool.maxScopes) ? pool.maxScopes! : DEFAULTS.maxScopes,
+    idleTtlMs: Number.isFinite(pool.idleTtlMs) ? pool.idleTtlMs! : DEFAULTS.idleTtlMs,
+    sweepMs:   Number.isFinite(pool.sweepMs)   ? pool.sweepMs!   : DEFAULTS.sweepMs,
+    helloTimeoutMs: Number.isFinite(timeouts.helloMs) ? timeouts.helloMs! : DEFAULTS.helloTimeoutMs,
+    rpcTimeoutMs:   Number.isFinite(timeouts.rpcMs)   ? timeouts.rpcMs!   : DEFAULTS.rpcTimeoutMs,
+    dedupTtlMs:     Number.isFinite(timeouts.dedupMs) ? timeouts.dedupMs! : DEFAULTS.dedupTtlMs,
+    ackEmoji: file.ackEmoji ?? DEFAULTS.ackEmoji,
     storeDir,
+    configPath,
     sessionsDir: path.join(storeDir, 'sessions'),
     inboxDir: path.join(storeDir, 'inbox'),
     socketPath: path.join(storeDir, 'bridge.sock'),
@@ -93,7 +134,7 @@ export function loadConfig(envPath?: string): AppConfig {
 
 export function validateMasterConfig(cfg: AppConfig): string[] {
   const errors: string[] = [];
-  if (!cfg.appId) errors.push('LARK_APP_ID is required');
-  if (!cfg.appSecret) errors.push('LARK_APP_SECRET is required');
+  if (!cfg.appId) errors.push('feishu.appId is required');
+  if (!cfg.appSecret) errors.push('feishu.appSecret is required');
   return errors;
 }

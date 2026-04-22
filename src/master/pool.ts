@@ -249,7 +249,7 @@ export class TmuxPool {
       '-e', `LARK_CHANNEL_SCOPE_KEY=${session.scopeKey}`,
       '-e', `LARK_CHANNEL_SOCK=${this.deps.config.socketPath}`,
       '-e', `LARK_CHANNEL_STORE=${this.deps.config.storeDir}`,
-      `-e`, `LARK_CHANNEL_LOG_LEVEL=${this.deps.config.logLevel}`,
+      '-e', `LARK_CHANNEL_DEBUG=${this.deps.config.debug ? '1' : '0'}`,
       cmd,
     ];
     lg.info(`spawnTmux cmd="tmux ${args.join(' ')}"`);

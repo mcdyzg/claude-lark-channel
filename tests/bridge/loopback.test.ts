@@ -6,8 +6,8 @@ import { BridgeServer } from '../../src/master/bridge-server.js';
 import { BridgeClient } from '../../src/child/bridge-client.js';
 import { Logger } from '../../src/shared/logger.js';
 
-// 测试里用静默 logger（既不写 stderr 也不写文件）
-const silent = new Logger('test', null, 'error');
+// 测试里用静默 logger（enabled=false → 所有方法 no-op）
+const silent = new Logger('test', null, false);
 
 let sockPath = '';
 let server: BridgeServer | null = null;

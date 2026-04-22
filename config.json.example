@@ -1,0 +1,27 @@
+{
+  "debug": false,
+  "feishu": {
+    "appId": "cli_xxxxx",
+    "appSecret": "xxxxx",
+    "domain": "feishu"
+  },
+  "whitelist": {
+    "users": [],
+    "chats": []
+  },
+  "scope": {
+    "mode": "thread",
+    "defaultWorkDir": ""
+  },
+  "pool": {
+    "maxScopes": 50,
+    "idleTtlMs": 14400000,
+    "sweepMs": 300000
+  },
+  "timeouts": {
+    "helloMs": 15000,
+    "rpcMs": 60000,
+    "dedupMs": 60000
+  },
+  "ackEmoji": "MeMeMe"
+}

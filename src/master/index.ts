@@ -56,9 +56,9 @@ export async function startMaster(): Promise<void> {
     process.exit(0);
   }
 
-  // 根 logger（写到 <logsDir>/debug.log）
-  const rootLogger = createRootLogger('master', cfg.logsDir, cfg.logLevel);
-  rootLogger.info(`startMaster pid=${process.pid} storeDir=${cfg.storeDir} scopeMode=${cfg.scopeMode}`);
+  // 根 logger：debug=false 时完全静默；debug=true 时写 <logsDir>/debug.log
+  const rootLogger = createRootLogger('master', cfg.logsDir, cfg.debug);
+  rootLogger.info(`startMaster pid=${process.pid} storeDir=${cfg.storeDir} scopeMode=${cfg.scopeMode} debug=${cfg.debug}`);
 
   // MCP transport 对接宿主 Claude（不暴露任何工具，仅保持 stdio 连通）
   const mcpServer = new McpServer(

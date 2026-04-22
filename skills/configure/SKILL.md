@@ -1,63 +1,98 @@
 ---
 name: configure
-description: Configure claude-lark-channel by managing ~/.claude/channels/lark-channel/.env. Use when user asks to configure, setup, or change Lark/Feishu credentials or options.
+description: Configure claude-lark-channel by managing ~/.claude/channels/lark-channel/config.json. Use when user asks to configure, setup, or change Lark/Feishu credentials or options.
 user-invocable: true
-argument-hint: "[<app_id> <app_secret>] | [setup] | [clear]"
+argument-hint: "[<app_id> <app_secret>] | [setup] | [debug on|off] | [clear]"
 allowed-tools:
   - Read
   - Write
   - Bash(ls *)
   - Bash(mkdir *)
+  - Bash(rm *)
   - AskUserQuestion
 ---
 
 # /lark-channel:configure
 
-Manage configuration stored in `~/.claude/channels/lark-channel/.env`.
+Manage configuration stored in `~/.claude/channels/lark-channel/config.json`.
 
 Arguments passed: `$ARGUMENTS`
+
+The config file is a single JSON object with this shape (all fields optional; unlisted fields use defaults):
+
+```json
+{
+  "debug": false,
+  "feishu": {
+    "appId": "cli_xxxxx",
+    "appSecret": "xxxxx",
+    "domain": "feishu"
+  },
+  "whitelist": {
+    "users": [],
+    "chats": []
+  },
+  "scope": {
+    "mode": "thread",
+    "defaultWorkDir": "/Users/me/work"
+  },
+  "pool": {
+    "maxScopes": 50,
+    "idleTtlMs": 14400000,
+    "sweepMs": 300000
+  },
+  "timeouts": {
+    "helloMs": 15000,
+    "rpcMs": 60000,
+    "dedupMs": 60000
+  },
+  "ackEmoji": "MeMeMe"
+}
+```
+
+Always write atomically: write to `<path>.tmp` then rename to `<path>`.
 
 ---
 
 ## No args — Show current status
 
-1. Read `~/.claude/channels/lark-channel/.env` if present.
-2. Display recognized keys grouped and with sensitive values masked.
+1. Read `~/.claude/channels/lark-channel/config.json` if present. If absent, treat as empty `{}`.
+2. Display the effective config (merging file values over defaults) with sensitive fields masked.
 
 Mask rules:
-- `LARK_APP_ID`: show the first 6 chars, mask the rest with `***`
-- `LARK_APP_SECRET`: show first 3 + last 2, mask middle with `***`
+- `feishu.appId`: show first 6 chars, mask the rest with `***`
+- `feishu.appSecret`: show first 3 + last 2, mask middle with `***`
 
 Layout:
 ```
+=== Runtime ===
+debug:                   false
+
 === Credentials ===
-LARK_APP_ID:                cli_a1****
-LARK_APP_SECRET:            abc***xy
-LARK_DOMAIN:                feishu
+feishu.appId:            cli_a1****
+feishu.appSecret:        abc***xy
+feishu.domain:           feishu
 
 === Scope ===
-LARK_CHANNEL_SCOPE_MODE:    thread
-LARK_CHANNEL_DEFAULT_WORKDIR: /Users/me/work
+scope.mode:              thread
+scope.defaultWorkDir:    /Users/me/work
 
 === Whitelist ===
-LARK_ALLOWED_USER_IDS:      (not set)
-LARK_ALLOWED_CHAT_IDS:      (not set)
+whitelist.users:         (empty — accept all)
+whitelist.chats:         (empty — accept all)
 
 === Pool ===
-LARK_CHANNEL_MAX_SCOPES:    50
-LARK_CHANNEL_IDLE_TTL_MS:   14400000
-LARK_CHANNEL_SWEEP_MS:      300000
+pool.maxScopes:          50
+pool.idleTtlMs:          14400000
+pool.sweepMs:            300000
 
 === Timeouts ===
-LARK_CHANNEL_HELLO_TIMEOUT_MS: 15000
-LARK_CHANNEL_RPC_TIMEOUT_MS:   60000
-LARK_CHANNEL_DEDUP_TTL_MS:     60000
+timeouts.helloMs:        15000
+timeouts.rpcMs:          60000
+timeouts.dedupMs:        60000
 
 === Acknowledgement ===
-LARK_ACK_EMOJI:             MeMeMe
-
-=== Runtime ===
-LARK_CHANNEL_LOG_LEVEL:     info
+ackEmoji:                MeMeMe
 ```
 
 Next-step hints:
@@ -71,33 +106,48 @@ Next-step hints:
 `$1 = app_id`, `$2 = app_secret`
 
 1. Create `~/.claude/channels/lark-channel/` if missing.
-2. Read existing `.env` (if any) and preserve all other keys.
-3. Overwrite only `LARK_APP_ID` and `LARK_APP_SECRET`.
+2. Read existing `config.json` (if any) and preserve all other fields.
+3. Update only `feishu.appId` and `feishu.appSecret`.
 4. Write back atomically.
 5. Print masked confirmation + remind `/reload-plugins`.
 
 ---
 
+## `debug on|off` — Toggle log output
+
+`$1 = "debug"`, `$2 = "on" | "off"`
+
+1. Read existing `config.json` (create empty `{}` if absent).
+2. Set `debug = true` (on) or `debug = false` (off).
+3. Write atomically.
+4. Print `debug=<new value>. Run /reload-plugins to apply.`
+
+Remind user that when `debug=on`, verbose logs write to `~/.claude/channels/lark-channel/logs/debug.log`.
+
+---
+
 ## `setup` — Interactive wizard
 
-Ask in this order via `AskUserQuestion`:
+Ask in this order via `AskUserQuestion`. Skip questions whose answer is blank or chooses the default.
 
-1. `LARK_APP_ID` (required, string)
-2. `LARK_APP_SECRET` (required, string)
-3. `LARK_DOMAIN` — choose feishu / lark (default: feishu)
-4. `LARK_CHANNEL_SCOPE_MODE` — choose chat / thread (default: thread)
-5. `LARK_CHANNEL_DEFAULT_WORKDIR` (string, default: `$HOME`)
-6. `LARK_ALLOWED_USER_IDS` (optional CSV, default: empty)
-7. `LARK_ALLOWED_CHAT_IDS` (optional CSV, default: empty)
-8. `LARK_CHANNEL_MAX_SCOPES` (int, default: 50)
-9. `LARK_CHANNEL_IDLE_TTL_MS` (int, default: 14400000)
+1. `feishu.appId` (required, string)
+2. `feishu.appSecret` (required, string)
+3. `feishu.domain` — choose `feishu` / `lark` (default: `feishu`)
+4. `scope.mode` — choose `chat` / `thread` (default: `thread`)
+5. `scope.defaultWorkDir` (string, default: `$HOME`)
+6. `whitelist.users` (optional CSV; convert to array; default: empty array)
+7. `whitelist.chats` (optional CSV; convert to array; default: empty array)
+8. `pool.maxScopes` (int, default: 50)
+9. `pool.idleTtlMs` (int, default: 14400000)
+10. `debug` — choose `off` / `on` (default: `off`)
 
-Write `.env` atomically, then print "Configuration saved. Run `/reload-plugins` to apply."
+Assemble into the JSON shape at the top of this skill, write atomically, then print
+"Configuration saved to ~/.claude/channels/lark-channel/config.json. Run `/reload-plugins` to apply."
 
 ---
 
 ## `clear` — Remove configuration
 
 1. Confirm twice via `AskUserQuestion`.
-2. If confirmed, delete `~/.claude/channels/lark-channel/.env`.
+2. If confirmed, delete `~/.claude/channels/lark-channel/config.json`.
 3. Print "Configuration cleared."
