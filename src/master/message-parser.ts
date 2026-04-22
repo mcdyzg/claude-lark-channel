@@ -61,3 +61,38 @@ export function extractAttachments(message: RawMsgForAttachments): LarkAttachmen
   }
   return result;
 }
+
+/**
+ * 从 `image` / `post` 消息的 raw content 抽取 image_key 列表。
+ * - image: 返回 [parsed.image_key]
+ * - post:  深度遍历 content/zh_cn.content/en_us.content，收集所有 node.tag === 'img' 的 image_key
+ * - 其他 msg_type / 解析失败：[]
+ */
+export function extractImageKeys(messageType: string, rawContent: string): string[] {
+  let parsed: any;
+  try {
+    parsed = JSON.parse(rawContent);
+  } catch {
+    return [];
+  }
+
+  if (messageType === 'image') {
+    return parsed?.image_key ? [parsed.image_key] : [];
+  }
+
+  if (messageType === 'post') {
+    const content = parsed?.content ?? parsed?.zh_cn?.content ?? parsed?.en_us?.content ?? [];
+    const keys: string[] = [];
+    for (const line of content) {
+      if (!Array.isArray(line)) continue;
+      for (const node of line) {
+        if (node?.tag === 'img' && node?.image_key) {
+          keys.push(node.image_key);
+        }
+      }
+    }
+    return keys;
+  }
+
+  return [];
+}

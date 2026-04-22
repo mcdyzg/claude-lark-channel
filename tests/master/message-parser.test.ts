@@ -63,3 +63,59 @@ describe('extractAttachments', () => {
     expect(extractAttachments({ message_type: 'text', content: JSON.stringify({ text: 'hi' }) })).toEqual([]);
   });
 });
+
+import { extractImageKeys } from '../../src/master/message-parser.js';
+
+describe('extractImageKeys', () => {
+  it('image type — returns [image_key]', () => {
+    expect(extractImageKeys('image', JSON.stringify({ image_key: 'img_abc' })))
+      .toEqual(['img_abc']);
+  });
+
+  it('post with single inline img — returns [key]', () => {
+    const raw = JSON.stringify({
+      zh_cn: {
+        content: [
+          [
+            { tag: 'text', text: 'hello' },
+            { tag: 'img', image_key: 'img_xyz' },
+          ],
+        ],
+      },
+    });
+    expect(extractImageKeys('post', raw)).toEqual(['img_xyz']);
+  });
+
+  it('post with multiple imgs across lines — returns all keys in order', () => {
+    const raw = JSON.stringify({
+      content: [
+        [{ tag: 'img', image_key: 'k1' }],
+        [{ tag: 'text', text: 'middle' }],
+        [{ tag: 'img', image_key: 'k2' }, { tag: 'img', image_key: 'k3' }],
+      ],
+    });
+    expect(extractImageKeys('post', raw)).toEqual(['k1', 'k2', 'k3']);
+  });
+
+  it('post with en_us locale wrapper — handles it', () => {
+    const raw = JSON.stringify({
+      en_us: {
+        content: [[{ tag: 'img', image_key: 'en_key' }]],
+      },
+    });
+    expect(extractImageKeys('post', raw)).toEqual(['en_key']);
+  });
+
+  it('text — returns []', () => {
+    expect(extractImageKeys('text', JSON.stringify({ text: 'hello' }))).toEqual([]);
+  });
+
+  it('file — returns []', () => {
+    expect(extractImageKeys('file', JSON.stringify({ file_key: 'f1', file_name: 'a.pdf' }))).toEqual([]);
+  });
+
+  it('malformed JSON — returns []', () => {
+    expect(extractImageKeys('image', 'not json')).toEqual([]);
+    expect(extractImageKeys('post', '<!html>')).toEqual([]);
+  });
+});
