@@ -34,22 +34,44 @@ export class TmuxPool {
 
   start(): void {
     const lg = this.deps.logger;
-    // 清理上次运行残留的 lark-* tmux 会话
+    // 启动时"认领"上次运行留下的 lark-* tmux 会话：
+    //   - tmux 会话名格式 `lark-<scopeId>`，scopeId 可反查 session store
+    //   - 若 scopeId 在 store 里能找到 → 注册进 pool，child 会自动重连
+    //   - 若找不到（store 已清 / 非本插件生成） → 是孤儿，kill
+    // 这保留了跨 master 重启的 tmux 状态，user 可以 `tmux attach -t lark-<id>`
+    // 继续查看 Claude 的历史上下文。
+    let adopted = 0;
+    let orphans = 0;
     try {
       const raw = execSync('tmux ls 2>/dev/null || true', { encoding: 'utf-8' });
-      let killed = 0;
       for (const line of raw.split('\n')) {
         const name = line.split(':')[0];
-        if (name && name.startsWith('lark-')) {
+        if (!name || !name.startsWith('lark-')) continue;
+        const scopeId = name.slice('lark-'.length);
+        const session = this.deps.store.getById(scopeId);
+        if (!session) {
           try { execSync(`tmux kill-session -t ${shellQuote(name)}`); } catch {/* ignore */}
-          lg.info(`killed residual tmux=${name}`);
-          killed++;
+          lg.info(`start: killed orphan tmux=${name} (scopeId not in store)`);
+          orphans++;
+          continue;
         }
+        const entry: PoolEntry = {
+          scopeKey: session.scopeKey,
+          scopeId: session.id,
+          tmuxSession: name,
+          childConn: null,  // 等 child 自己重连进来
+          lastActiveAt: Date.now(),
+          spawnedAt: Date.now(),
+          msgCount: 0,
+        };
+        this.entries.set(session.scopeKey, entry);
+        lg.info(`start: adopted tmux=${name} scope=${session.scopeKey} (awaiting child reconnect)`);
+        adopted++;
       }
-      lg.info(`start: cleared ${killed} residual lark-* tmux sessions; maxScopes=${this.deps.config.maxScopes} idleTtlMs=${this.deps.config.idleTtlMs} sweepMs=${this.deps.config.sweepMs}`);
     } catch (err: any) {
-      lg.warn(`start: residual cleanup failed: ${err?.message ?? err}`);
+      lg.warn(`start: tmux ls failed: ${err?.message ?? err}`);
     }
+    lg.info(`start: ${adopted} adopted, ${orphans} orphans killed; maxScopes=${this.deps.config.maxScopes} idleTtlMs=${this.deps.config.idleTtlMs} sweepMs=${this.deps.config.sweepMs}`);
 
     this.sweeperHandle = setInterval(() => this.sweep(), this.deps.config.sweepMs);
   }
@@ -309,9 +331,15 @@ export class TmuxPool {
 
   async stop(): Promise<void> {
     this.shuttingDown = true;
-    this.deps.logger.info(`pool stop; entries=${this.entries.size}`);
+    this.deps.logger.info(`pool stop (preserving tmux); entries=${this.entries.size}`);
     if (this.sweeperHandle) clearInterval(this.sweeperHandle);
-    for (const key of [...this.entries.keys()]) this.killEntry(key);
+    // 关 master 时只断开与 child 的 socket 连接，tmux 会话保留。
+    // 下次 master 起来时 start() 会按 session store 认领这些 tmux。
+    // child 看到 socket 断会按指数退避自动重连，无需我们主动通知。
+    for (const entry of this.entries.values()) {
+      try { entry.childConn?.close(); } catch {/* ignore */}
+    }
+    this.entries.clear();
   }
 
   touch(scopeKey: string): void {
