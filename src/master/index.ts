@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import * as Lark from '@larksuiteoapi/node-sdk';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -283,7 +284,9 @@ export async function startMaster(): Promise<void> {
 }
 
 function assertToolExists(tool: string, ...probeArgs: string[]): void {
-  const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
+  // ESM 模块无 require；用 createRequire 保持 helper 自闭合，同时不在顶层 spawn
+  const req = createRequire(import.meta.url);
+  const { spawnSync } = req('node:child_process') as typeof import('node:child_process');
   const res = spawnSync(tool, probeArgs, { stdio: 'ignore' });
   if (res.status !== 0) {
     console.error(`[master] required tool not found or not runnable: ${tool}`);
