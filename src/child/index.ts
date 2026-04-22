@@ -51,8 +51,15 @@ export async function startChild(): Promise<void> {
 
   registerChildTools(server, bridge);
 
+  // Gate bridge.start() until MCP handshake fully completes. Otherwise master
+  // may push a channel_push before the host Claude sends `initialized`, and
+  // the resulting `server.notification(...)` is dropped per MCP spec.
+  server.server.oninitialized = () => {
+    console.error('[child] MCP initialized; connecting bridge to master');
+    bridge.start();
+  };
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('[child] MCP connected; connecting bridge...');
-  bridge.start();
+  console.error('[child] MCP stdio connected; awaiting initialized handshake...');
 }
