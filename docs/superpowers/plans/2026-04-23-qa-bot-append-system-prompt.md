@@ -1,10 +1,12 @@
-# Q&A Bot via `--append-system-prompt` Implementation Plan
+# Q&A Bot via `--append-system-prompt-file` Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Inject a user-configured persona into every spawned child claude via `--append-system-prompt`, turning this plugin into a configurable Q&A bot without touching any per-scope or skill machinery.
+> **Revised 2026-04-23** after Task 1 pre-flight confirmed the CLI exposes `--append-system-prompt-file <path>`. We now delegate file reading to claude itself and master only passes a validated path. See spec for rationale.
 
-**Architecture:** Add one optional config field `appendSystemPromptFile` (absolute path). At spawn time, master reads the file, single-quote-escapes it, and appends `--append-system-prompt '<content>'` to the `claude ...` command built in `src/master/pool.ts`. If the file is missing/empty/relative-path, degrade silently (no flag) with a logger error. Refactor the inline `cmd` string construction into a pure `buildClaudeCmd()` function so the branch logic can be unit-tested.
+**Goal:** Inject a user-configured persona into every spawned child claude via `--append-system-prompt-file`, turning this plugin into a configurable Q&A bot without touching any per-scope or skill machinery.
+
+**Architecture:** Add one optional config field `appendSystemPromptFile` (absolute path). At spawn time, master runs a small pre-check (abs path + `fs.statSync` + `size > 0`) and, if it passes, appends `--append-system-prompt-file '<path>'` to the `claude ...` command built in `src/master/pool.ts`. If any check fails, degrade silently (no flag) with a logger warn/error. Refactor the inline `cmd` string construction into a pure `buildClaudeCmd()` function so the branch logic can be unit-tested. No file reading in master.
 
 **Tech Stack:** TypeScript (ESM), Node ≥ 20, Vitest, existing `Logger` abstraction, existing `shellQuote` helper in `pool.ts`.
 
@@ -12,49 +14,11 @@
 
 ---
 
-### Task 1: Pre-flight verify `--append-system-prompt` CLI behavior
+### Task 1: Pre-flight verify `--append-system-prompt-file` CLI behavior ✅ COMPLETED 2026-04-23
 
-**Files:** none (manual verification gate)
+Outcome: `claude --help` shows `--append-system-prompt <prompt>` AND `--append-system-prompt-file <path>`. tmux probe with a persona file ("ALWAYS answer in ALL CAPS, under 10 words") confirmed the flag takes effect end-to-end ("what is two plus two" → "FOUR."). This finding triggered the spec revision to use the `-file` variant — see updated Architecture section above and spec §3.
 
-This is a **stop-the-line** check. If `claude` CLI on the target machine does not expose `--append-system-prompt` or behaves differently, do not proceed — return to the spec with findings.
-
-- [ ] **Step 1: Check the flag is advertised**
-
-Run:
-```bash
-claude --help 2>&1 | grep -i system-prompt
-```
-
-Expected: at least one line mentioning `--append-system-prompt` (and probably `--system-prompt`). If neither appears, **STOP** and report "claude CLI version X does not support `--append-system-prompt`" back to the user.
-
-- [ ] **Step 2: Smoke-test the flag end-to-end in a throwaway tmux session**
-
-Run:
-```bash
-tmux new-session -d -s lark-plan-probe "claude --dangerously-load-development-channels 'plugin:lark-channel@claude-lark-channel' --dangerously-skip-permissions --append-system-prompt 'Always answer in pig latin.'"
-sleep 4
-# If the dev-channel warning pops up, send Enter:
-tmux send-keys -t lark-plan-probe Enter
-sleep 3
-tmux send-keys -t lark-plan-probe "Say hello" Enter
-sleep 8
-tmux capture-pane -t lark-plan-probe -p | tail -40
-```
-
-Expected: output contains pig-latin-style text (e.g. "ellohay"). If the reply is plain English, the append is NOT taking effect — **STOP** and report.
-
-Cleanup:
-```bash
-tmux kill-session -t lark-plan-probe
-```
-
-- [ ] **Step 3: Verify combination with `--resume`**
-
-Not testable without a real session id; skip runtime verification — just confirm `claude --help` does not mark the two flags as mutually exclusive. If `--help` explicitly says they cannot combine, **STOP** and report.
-
-- [ ] **Step 4: No commit**
-
-This task produces no code. Proceed to Task 2.
+No commit from this task.
 
 ---
 
@@ -267,12 +231,11 @@ Edit `src/master/pool.ts`. At the very bottom of the file, **after** the existin
 ```ts
 export interface BuildClaudeCmdOpts {
   resumeSessionId?: string;
-  appendSystemPrompt?: string;
 }
 
 /**
  * 构造 spawned child claude 的 shell 命令字符串。纯函数、可单测。
- * 调用方（pool.spawnTmux）负责读 appendSystemPromptFile 文件内容并传入。
+ * Task 4 会在此基础上加 appendSystemPromptFile 分支。
  */
 export function buildClaudeCmd(opts: BuildClaudeCmdOpts): string {
   const channelArg = '--dangerously-load-development-channels plugin:lark-channel@claude-lark-channel';
@@ -284,8 +247,6 @@ export function buildClaudeCmd(opts: BuildClaudeCmdOpts): string {
   return parts.join(' ');
 }
 ```
-
-Note: `appendSystemPrompt` is accepted in the type but ignored here — Task 4 wires it in. Keeping the type field now lets Task 4 add only one line.
 
 - [ ] **Step 4: Replace inline cmd construction in `spawnTmux`**
 
@@ -334,12 +295,12 @@ git commit -m "refactor(pool): extract buildClaudeCmd pure function
 
 No behavior change. The spawn command string is now built by a
 small exported function so the flag composition can be unit-tested.
-Prepares for --append-system-prompt injection."
+Prepares for --append-system-prompt-file injection."
 ```
 
 ---
 
-### Task 4: Inject `--append-system-prompt` flag + wire file-read in `spawnTmux` (TDD)
+### Task 4: Inject `--append-system-prompt-file` flag + path pre-check in `spawnTmux` (TDD)
 
 **Files:**
 - Modify: `tests/master/spawn-cmd.test.ts`
@@ -350,29 +311,24 @@ Prepares for --append-system-prompt injection."
 Append to `tests/master/spawn-cmd.test.ts`:
 
 ```ts
-describe('buildClaudeCmd — appendSystemPrompt', () => {
-  it('adds --append-system-prompt when content is non-empty', () => {
-    const cmd = buildClaudeCmd({ appendSystemPrompt: 'You are a QA bot.' });
-    expect(cmd).toContain("--append-system-prompt 'You are a QA bot.'");
+describe('buildClaudeCmd — appendSystemPromptFile', () => {
+  it('adds --append-system-prompt-file when path is provided', () => {
+    const cmd = buildClaudeCmd({ appendSystemPromptFile: '/abs/path/persona.md' });
+    expect(cmd).toContain("--append-system-prompt-file '/abs/path/persona.md'");
   });
 
-  it('single-quote-escapes content with embedded single quotes', () => {
-    const cmd = buildClaudeCmd({ appendSystemPrompt: "don't be generic" });
-    // shellQuote escapes ' as '\'' — so the arg becomes 'don'\''t be generic'
-    expect(cmd).toContain(`--append-system-prompt 'don'\\''t be generic'`);
+  it('single-quote-escapes paths with special characters', () => {
+    const cmd = buildClaudeCmd({ appendSystemPromptFile: "/tmp/it's here.md" });
+    // shellQuote escapes ' as '\'' — so the arg becomes '/tmp/it'\''s here.md'
+    expect(cmd).toContain(`--append-system-prompt-file '/tmp/it'\\''s here.md'`);
   });
 
-  it('preserves multi-line content inside single quotes', () => {
-    const cmd = buildClaudeCmd({ appendSystemPrompt: 'line one\nline two' });
-    expect(cmd).toContain("--append-system-prompt 'line one\nline two'");
-  });
-
-  it('omits the flag when content is empty string', () => {
-    const cmd = buildClaudeCmd({ appendSystemPrompt: '' });
+  it('omits the flag when path is empty string', () => {
+    const cmd = buildClaudeCmd({ appendSystemPromptFile: '' });
     expect(cmd).not.toContain('--append-system-prompt');
   });
 
-  it('omits the flag when content is undefined', () => {
+  it('omits the flag when path is undefined', () => {
     const cmd = buildClaudeCmd({});
     expect(cmd).not.toContain('--append-system-prompt');
   });
@@ -380,12 +336,12 @@ describe('buildClaudeCmd — appendSystemPrompt', () => {
   it('combines with --resume (append before resume)', () => {
     const cmd = buildClaudeCmd({
       resumeSessionId: 'sid-1',
-      appendSystemPrompt: 'persona',
+      appendSystemPromptFile: '/abs/persona.md',
     });
-    expect(cmd).toContain("--append-system-prompt 'persona'");
+    expect(cmd).toContain("--append-system-prompt-file '/abs/persona.md'");
     expect(cmd).toContain("--resume 'sid-1'");
-    // Ordering: append-system-prompt should come before --resume for readability
-    expect(cmd.indexOf('--append-system-prompt')).toBeLessThan(cmd.indexOf('--resume'));
+    // Ordering: append-system-prompt-file should come before --resume for readability
+    expect(cmd.indexOf('--append-system-prompt-file')).toBeLessThan(cmd.indexOf('--resume'));
   });
 });
 ```
@@ -397,19 +353,24 @@ Run:
 npx vitest run tests/master/spawn-cmd.test.ts
 ```
 
-Expected: the new 6 tests FAIL (old 2 still pass).
+Expected: the new 5 tests FAIL (old 2 still pass).
 
 - [ ] **Step 3: Implement the flag in `buildClaudeCmd`**
 
-Edit `src/master/pool.ts`. In the `buildClaudeCmd` function added in Task 3, insert the append-system-prompt branch **before** the `--resume` branch:
+Edit `src/master/pool.ts`. Extend the `BuildClaudeCmdOpts` interface and the function body:
 
 ```ts
+export interface BuildClaudeCmdOpts {
+  resumeSessionId?: string;
+  appendSystemPromptFile?: string;
+}
+
 export function buildClaudeCmd(opts: BuildClaudeCmdOpts): string {
   const channelArg = '--dangerously-load-development-channels plugin:lark-channel@claude-lark-channel';
   const permArg = '--dangerously-skip-permissions';
   const parts: string[] = ['claude', channelArg, permArg];
-  if (opts.appendSystemPrompt && opts.appendSystemPrompt.length > 0) {
-    parts.push(`--append-system-prompt ${shellQuote(opts.appendSystemPrompt)}`);
+  if (opts.appendSystemPromptFile && opts.appendSystemPromptFile.length > 0) {
+    parts.push(`--append-system-prompt-file ${shellQuote(opts.appendSystemPromptFile)}`);
   }
   if (opts.resumeSessionId) {
     parts.push(`--resume ${shellQuote(opts.resumeSessionId)}`);
@@ -425,19 +386,17 @@ Run:
 npx vitest run tests/master/spawn-cmd.test.ts
 ```
 
-Expected: all 8 tests PASS.
+Expected: all 7 tests PASS.
 
-- [ ] **Step 5: Wire the file read into `spawnTmux`**
+- [ ] **Step 5: Wire the path pre-check into `spawnTmux`**
 
-Edit `src/master/pool.ts`. At the top of the file, the `import path from 'node:path'` already exists. Ensure `fs` is also imported (`import fs from 'node:fs';` — already present at line 2).
-
-In `spawnTmux`, the `const cmd = buildClaudeCmd({...})` line from Task 3 needs to gain a second opt. Replace it with:
+Edit `src/master/pool.ts`. `fs` and `path` are already imported at the top. In `spawnTmux`, the `const cmd = buildClaudeCmd({...})` line from Task 3 needs to gain a second opt. Replace it with:
 
 ```ts
-const appendSystemPrompt = this.readAppendSystemPrompt();
+const appendSystemPromptFile = this.resolveAppendSystemPromptFile();
 const cmd = buildClaudeCmd({
   resumeSessionId: session.claudeSessionId || undefined,
-  appendSystemPrompt,
+  appendSystemPromptFile,
 });
 ```
 
@@ -445,30 +404,36 @@ Then add a new private method on the `TmuxPool` class, placed next to other help
 
 ```ts
 /**
- * 读取 config.appendSystemPromptFile 对应的文件。
- * 任何失败路径都降级为 undefined（spawn 会继续，不加 flag），并 log error。
- * 不抛异常，不阻塞 master。
+ * 校验 config.appendSystemPromptFile 是否能作为 --append-system-prompt-file
+ * 的值传给 child claude。任何检查失败都降级为 undefined（spawn 继续、不加 flag），
+ * 避免 child 启动时因为 bad 路径立即退出 → 触发 hello-timeout 重试死循环。
+ *
+ * 不读取文件内容，只做存在性与大小检查；内容解析由 claude 进程自己完成。
  */
-private readAppendSystemPrompt(): string | undefined {
+private resolveAppendSystemPromptFile(): string | undefined {
   const file = this.deps.config.appendSystemPromptFile;
   if (!file) return undefined;
   if (!path.isAbsolute(file)) {
     this.deps.logger.error(`appendSystemPromptFile must be absolute, got: ${file}; ignoring`);
     return undefined;
   }
-  let content: string;
+  let stat: fs.Stats;
   try {
-    content = fs.readFileSync(file, 'utf-8');
+    stat = fs.statSync(file);
   } catch (err: any) {
-    this.deps.logger.error(`appendSystemPromptFile read failed path=${file} err=${err?.message ?? err}; ignoring`);
+    this.deps.logger.error(`appendSystemPromptFile stat failed path=${file} err=${err?.message ?? err}; ignoring`);
     return undefined;
   }
-  if (content.trim().length === 0) {
-    this.deps.logger.warn(`appendSystemPromptFile is empty/whitespace-only path=${file}; ignoring`);
+  if (!stat.isFile()) {
+    this.deps.logger.error(`appendSystemPromptFile is not a regular file path=${file}; ignoring`);
     return undefined;
   }
-  this.deps.logger.debug(`appendSystemPromptFile loaded path=${file} bytes=${content.length}`);
-  return content;
+  if (stat.size === 0) {
+    this.deps.logger.warn(`appendSystemPromptFile is empty path=${file}; ignoring`);
+    return undefined;
+  }
+  this.deps.logger.debug(`appendSystemPromptFile OK path=${file} bytes=${stat.size}`);
+  return file;
 }
 ```
 
@@ -479,7 +444,7 @@ Run:
 npm test
 ```
 
-Expected: all tests PASS (8 in spawn-cmd.test.ts + 4 in config.test.ts + existing 58 = ~70 total).
+Expected: all tests PASS (7 in spawn-cmd.test.ts + 4 in config.test.ts + existing 58 = ~69 total).
 
 - [ ] **Step 7: Typecheck**
 
@@ -494,18 +459,20 @@ Expected: clean.
 
 ```bash
 git add src/master/pool.ts tests/master/spawn-cmd.test.ts
-git commit -m "feat(pool): inject --append-system-prompt from config file
+git commit -m "feat(pool): inject --append-system-prompt-file from config
 
-spawnTmux now reads config.appendSystemPromptFile at spawn time and
-passes the content to buildClaudeCmd. Missing/unreadable/empty/
-non-absolute-path all degrade silently (logger error, no flag).
+spawnTmux now validates config.appendSystemPromptFile (abs path +
+stat + size>0) and passes the path to buildClaudeCmd. Non-absolute /
+missing / wrong-type / empty all degrade silently (logger warn/error,
+no flag), preventing a bad config from trapping the child in a
+startup-failure retry loop.
 
-Effect: operators can point the config at a persona .md and every
-spawned child claude will receive that persona on top of its default
-system prompt. Turns the plugin into a configurable Q&A bot.
+Master does not read file content — that is delegated to claude via
+--append-system-prompt-file <path>. Turns the plugin into a
+configurable Q&A bot.
 
-Prompt changes take effect on next spawn of an affected scope; running
-tmux sessions are not hot-reloaded."
+Persona changes take effect on next spawn of an affected scope;
+running tmux sessions are not hot-reloaded."
 ```
 
 ---
@@ -565,7 +532,7 @@ Edit `CLAUDE.md`. Find the "Conventions" bullet:
 Replace that line with:
 
 ```
-- Config lives at `~/.claude/channels/lark-channel/config.json` (JSON, not .env). See `config.json.example` and `src/shared/config.ts` for shape. `appendSystemPromptFile` (optional absolute path) gets read at **each spawn** and injected into the child claude via `--append-system-prompt`; changing the file does **not** affect running tmux sessions — kill the affected `lark-<id>` session (or wait for idle sweep) to pick up new content.
+- Config lives at `~/.claude/channels/lark-channel/config.json` (JSON, not .env). See `config.json.example` and `src/shared/config.ts` for shape. `appendSystemPromptFile` (optional absolute path) is validated at **each spawn** and passed to the child claude via `--append-system-prompt-file`; claude reads the file itself on startup. Changing the file does **not** affect running tmux sessions — kill the affected `lark-<id>` session (or wait for idle sweep) to pick up new content.
 ```
 
 - [ ] **Step 3: Add a "Using as a Q&A bot" section to `README.md`**
@@ -583,11 +550,11 @@ To make every spawned child claude adopt a specific persona (e.g. "you are a Q&A
 }
 ```
 
-The file content is appended to claude's default system prompt via `--append-system-prompt` when each per-scope tmux session is spawned. Keep it focused on **persona / always-on constraints** — project-specific knowledge belongs in the target repo's `CLAUDE.md` / `.claude/skills/`, not in this file.
+The file is passed to each spawned child claude via `--append-system-prompt-file`; claude reads it and appends the content to its default system prompt. Keep it focused on **persona / always-on constraints** — project-specific knowledge belongs in the target repo's `CLAUDE.md` / `.claude/skills/`, not in this file.
 
 **Reload semantics:** changing the prompt file does not retroactively affect running tmux sessions. To pick up new content for a scope: `tmux kill-session -t lark-<scopeId>` (next inbound message will respawn with the new prompt), or wait for the idle-TTL sweep.
 
-**Caveats:** the path must be absolute; missing / unreadable / empty files are ignored with a logger error (master stays up).
+**Caveats:** the path must be absolute; missing / wrong-type / empty (size 0) files are ignored with a logger warn/error (master stays up). Persona size ~1-2 KB is a reasonable target; larger files are accepted but eat context budget on every turn.
 ```
 
 - [ ] **Step 4: Verify files render / no markdown breakage**
@@ -628,9 +595,10 @@ Edit `scripts/smoke-test.md`. At the bottom of the file (after line 40, the last
 
 - [ ] **Persona injection**: create `/tmp/lark-persona-probe.md` with content `Always answer in pig latin. Do not modify files.` Set `appendSystemPromptFile` to that path in `~/.claude/channels/lark-channel/config.json`. Kill any existing `lark-*` tmux sessions. `/reload-plugins`. DM the bot `What is 2 + 2?`. Expect: reply is in pig-latin-ish English (e.g. "ourfay"). `tmux attach -t lark-<id>` and inspect the pane — the inbound user message should be plain text (no leaked system prompt content).
 - [ ] **Reload requires scope restart**: with the persona still configured, edit `/tmp/lark-persona-probe.md` to say `Always answer in ALL CAPS.` Without killing tmux, DM the bot again. Expect: reply is STILL pig-latin (proving the running session did not reload). Now `tmux kill-session -t lark-<id>`, DM again → new reply is all caps.
-- [ ] **Missing file degrades silently**: set `appendSystemPromptFile` to `/tmp/does-not-exist.md`. `/reload-plugins`, kill any `lark-*` sessions. DM the bot. Expect: reply is normal (no persona). `grep appendSystemPromptFile ~/.claude/channels/lark-channel/logs/debug.log` (requires `debug: true`) shows an error line; master is still up.
+- [ ] **Missing file degrades silently**: set `appendSystemPromptFile` to `/tmp/does-not-exist.md`. `/reload-plugins`, kill any `lark-*` sessions. DM the bot. Expect: reply is normal (no persona). `grep appendSystemPromptFile ~/.claude/channels/lark-channel/logs/debug.log` (requires `debug: true`) shows a `stat failed` error line; master is still up; child claude DID start (proving pre-check prevented bad path reaching CLI).
 - [ ] **Relative path rejected**: set `appendSystemPromptFile` to `persona.md` (no leading `/`). DM the bot. Expect: normal reply + logger error `appendSystemPromptFile must be absolute`.
-- [ ] **Empty file treated as unset**: `touch /tmp/empty-persona.md`; point config at it. DM the bot. Expect: normal reply + logger warn `is empty/whitespace-only`.
+- [ ] **Empty file treated as unset**: `touch /tmp/empty-persona.md`; point config at it. DM the bot. Expect: normal reply + logger warn `appendSystemPromptFile is empty`.
+- [ ] **Directory rejected**: point `appendSystemPromptFile` at a directory path (e.g. `/tmp`). Expect: normal reply + logger error `is not a regular file`.
 ```
 
 - [ ] **Step 2: Commit**
@@ -647,7 +615,7 @@ three degrade paths (missing file, relative path, empty file)."
 
 ## Done criteria
 
-- All vitest tests pass (baseline 58 + ~10 new)
+- All vitest tests pass (baseline 58 + 4 config + 7 spawn-cmd = 69)
 - `npm run typecheck` clean
 - Five commits landed: config field, refactor, flag injection, docs, smoke-test (plus pre-flight verify which is no-commit)
 - Manual smoke: persona visible in bot replies after setting `appendSystemPromptFile`
