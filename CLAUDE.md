@@ -23,7 +23,7 @@ Single TypeScript plugin, two roles (master/child) selected by `LARK_CHANNEL_SCO
 - Vitest for pure modules under `tests/`
 - Integration test for bridge loopback: `tests/bridge/loopback.test.ts`
 - tmux + real claude paths verified manually via `scripts/smoke-test.md` (no CI E2E)
-- Current test count: 58 across 8 files
+- Current test count: 69 across 10 files
 
 ## Common pitfalls
 - **Don't use `--print` + channel notifications**: `--print` does not support the `claude/channel` experimental capability and uses incompatible auth mode (API key vs claude.ai login)
