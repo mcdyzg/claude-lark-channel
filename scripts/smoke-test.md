@@ -40,9 +40,18 @@ Manual checks. Use a test Feishu app with a dedicated bot.
 
 ## Append system prompt (spec 2026-04-23)
 
-- [ ] **Persona injection**: create `/tmp/lark-persona-probe.md` with content `Always answer in pig latin. Do not modify files.` Set `appendSystemPromptFile` to that path in `~/.claude/channels/lark-channel/config.json`. Kill any existing `lark-*` tmux sessions. `/reload-plugins`. DM the bot `What is 2 + 2?`. Expect: reply is in pig-latin-ish English (e.g. "ourfay"). `tmux attach -t lark-<id>` and inspect the pane — the inbound user message should be plain text (no leaked system prompt content).
+**Prerequisites for this section:**
+- `debug: true` in config.json (scenarios 3–6 depend on `logs/debug.log` — the logger is a complete no-op when `debug:false`)
+- Between each scenario: update config, then `/reload-plugins` (restarts master) AND kill any leftover `lark-*` tmux sessions (`tmux ls | grep ^lark- | awk -F: '{print $1}' | xargs -I {} tmux kill-session -t {}`). Otherwise a stale child spawned with the previous config will keep replying and the new config is never exercised.
+- Find `<id>` in commands below via `tmux ls | grep ^lark-`
+
+Scenarios:
+
+- [ ] **Persona injection**: create `/tmp/lark-persona-probe.md` with content `Always answer in pig latin.` Set `appendSystemPromptFile` to that path in `~/.claude/channels/lark-channel/config.json`. Kill any existing `lark-*` tmux sessions. `/reload-plugins`. DM the bot `What is 2 + 2?`. Expect: reply is in pig-latin-ish English (e.g. "ourfay"). `tmux attach -t lark-<id>` and inspect the pane — the inbound user message should be plain text (no leaked system prompt content).
 - [ ] **Reload requires scope restart**: with the persona still configured, edit `/tmp/lark-persona-probe.md` to say `Always answer in ALL CAPS.` Without killing tmux, DM the bot again. Expect: reply is STILL pig-latin (proving the running session did not reload). Now `tmux kill-session -t lark-<id>`, DM again → new reply is all caps.
-- [ ] **Missing file degrades silently**: set `appendSystemPromptFile` to `/tmp/does-not-exist.md`. `/reload-plugins`, kill any `lark-*` sessions. DM the bot. Expect: reply is normal (no persona). `grep appendSystemPromptFile ~/.claude/channels/lark-channel/logs/debug.log` (requires `debug: true`) shows a `stat failed` error line; master is still up; child claude DID start (proving pre-check prevented bad path reaching CLI).
-- [ ] **Relative path rejected**: set `appendSystemPromptFile` to `persona.md` (no leading `/`). DM the bot. Expect: normal reply + logger error `appendSystemPromptFile must be absolute`.
-- [ ] **Empty file treated as unset**: `touch /tmp/empty-persona.md`; point config at it. DM the bot. Expect: normal reply + logger warn `appendSystemPromptFile is empty`.
-- [ ] **Directory rejected**: point `appendSystemPromptFile` at a directory path (e.g. `/tmp`). Expect: normal reply + logger error `is not a regular file`.
+- [ ] **Missing file degrades silently**: set `appendSystemPromptFile` to `/tmp/does-not-exist.md`. `/reload-plugins`, kill any `lark-*` sessions. DM the bot. Expect: reply is normal (no persona). Verify pre-check actually prevented the bad path from reaching the CLI: (a) `tmux ls | grep ^lark-` shows a live session, (b) `tmux attach -t lark-<id>` shows an active claude prompt (not a crashed pane / exit message), (c) `grep appendSystemPromptFile ~/.claude/channels/lark-channel/logs/debug.log` shows a `stat failed` error line.
+- [ ] **Relative path rejected**: set `appendSystemPromptFile` to `persona.md` (no leading `/`). `/reload-plugins`, kill any `lark-*` sessions. DM the bot. Expect: normal reply + `grep appendSystemPromptFile logs/debug.log` shows `appendSystemPromptFile must be absolute`.
+- [ ] **Empty file treated as unset**: `touch /tmp/empty-persona.md`; point config at it. `/reload-plugins`, kill any `lark-*` sessions. DM the bot. Expect: normal reply + `grep appendSystemPromptFile logs/debug.log` shows `appendSystemPromptFile is empty`.
+- [ ] **Directory rejected**: point `appendSystemPromptFile` at a directory path (e.g. `/tmp`). `/reload-plugins`, kill any `lark-*` sessions. DM the bot. Expect: normal reply + `grep appendSystemPromptFile logs/debug.log` shows `is not a regular file`.
+
+**Cleanup for this section:** `rm -f /tmp/lark-persona-probe.md /tmp/empty-persona.md`; unset `appendSystemPromptFile` in `~/.claude/channels/lark-channel/config.json` (set to `""` or delete the key); `/reload-plugins`.
