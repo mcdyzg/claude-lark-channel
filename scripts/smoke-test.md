@@ -37,3 +37,12 @@ Manual checks. Use a test Feishu app with a dedicated bot.
 - [ ] **Quote-reply with text only**: quote-reply a text-only prior message and `@bot`. Expect: Claude reply references the parent's text (via `parent_content`).
 - [ ] **Regression — thread without images**: start a new thread with text-only root, `@bot` there. Expect: unchanged behaviour (background frame with text, no `image_path` meta).
 - [ ] **Regression — plain P2P, no parent**: DM the bot plain text. Expect: unchanged behaviour (no parent_* meta).
+
+## Append system prompt (spec 2026-04-23)
+
+- [ ] **Persona injection**: create `/tmp/lark-persona-probe.md` with content `Always answer in pig latin. Do not modify files.` Set `appendSystemPromptFile` to that path in `~/.claude/channels/lark-channel/config.json`. Kill any existing `lark-*` tmux sessions. `/reload-plugins`. DM the bot `What is 2 + 2?`. Expect: reply is in pig-latin-ish English (e.g. "ourfay"). `tmux attach -t lark-<id>` and inspect the pane — the inbound user message should be plain text (no leaked system prompt content).
+- [ ] **Reload requires scope restart**: with the persona still configured, edit `/tmp/lark-persona-probe.md` to say `Always answer in ALL CAPS.` Without killing tmux, DM the bot again. Expect: reply is STILL pig-latin (proving the running session did not reload). Now `tmux kill-session -t lark-<id>`, DM again → new reply is all caps.
+- [ ] **Missing file degrades silently**: set `appendSystemPromptFile` to `/tmp/does-not-exist.md`. `/reload-plugins`, kill any `lark-*` sessions. DM the bot. Expect: reply is normal (no persona). `grep appendSystemPromptFile ~/.claude/channels/lark-channel/logs/debug.log` (requires `debug: true`) shows a `stat failed` error line; master is still up; child claude DID start (proving pre-check prevented bad path reaching CLI).
+- [ ] **Relative path rejected**: set `appendSystemPromptFile` to `persona.md` (no leading `/`). DM the bot. Expect: normal reply + logger error `appendSystemPromptFile must be absolute`.
+- [ ] **Empty file treated as unset**: `touch /tmp/empty-persona.md`; point config at it. DM the bot. Expect: normal reply + logger warn `appendSystemPromptFile is empty`.
+- [ ] **Directory rejected**: point `appendSystemPromptFile` at a directory path (e.g. `/tmp`). Expect: normal reply + logger error `is not a regular file`.
