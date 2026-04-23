@@ -71,7 +71,7 @@ The file is passed to each spawned child claude via `--append-system-prompt-file
 
 **Reload semantics:** changing the prompt file does not retroactively affect running tmux sessions. To pick up new content for a scope: `tmux kill-session -t lark-<scopeId>` (next inbound message will respawn with the new prompt), or wait for the idle-TTL sweep.
 
-**Caveats:** the path must be absolute; missing / wrong-type / empty (size 0) files are ignored with a logger warn/error (master stays up). Persona size ~1-2 KB is a reasonable target; larger files are accepted but eat context budget on every turn.
+**Caveats:** the path must be absolute (relative paths are ignored, not rejected as an error); missing / wrong-type / empty (size 0) files are also ignored with a logger warn/error. In all failure modes the child still spawns — just without the flag — and master stays up. Persona size ~1-2 KB is a reasonable target; larger files are accepted but eat context budget on every turn.
 
 ## Layout
 ```
