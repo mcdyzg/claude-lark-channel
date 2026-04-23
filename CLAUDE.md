@@ -17,7 +17,7 @@ Single TypeScript plugin, two roles (master/child) selected by `LARK_CHANNEL_SCO
 - Stdout is sacred (MCP JSON-RPC); all user-visible logging goes through the `Logger` abstraction in `src/shared/logger.ts`. When `config.debug=false` the logger is a complete no-op (no stderr, no file); when `true` it writes to `<storeDir>/logs/debug.log` AND stderr
 - Keep per-file responsibility narrow; any file growing past ~300 lines is a candidate for split
 - Prefer pure logic in `src/shared/` + thin wiring in `master/index.ts` for testability
-- Config lives at `~/.claude/channels/lark-channel/config.json` (JSON, not .env). See `config.json.example` and `src/shared/config.ts` for shape
+- Config lives at `~/.claude/channels/lark-channel/config.json` (JSON, not .env). See `config.json.example` and `src/shared/config.ts` for shape. `appendSystemPromptFile` (optional absolute path) is validated at **each spawn** and passed to the child claude via `--append-system-prompt-file`; claude reads the file itself on startup. Changing the file does **not** affect running tmux sessions — kill the affected `lark-<id>` session (or wait for idle sweep) to pick up new content.
 
 ## Testing
 - Vitest for pure modules under `tests/`

@@ -23,5 +23,6 @@
     "rpcMs": 60000,
     "dedupMs": 60000
   },
+  "appendSystemPromptFile": "",
   "ackEmoji": "MeMeMe"
 }

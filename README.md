@@ -57,6 +57,22 @@ Config lives at `~/.claude/channels/lark-channel/config.json`. Manage via the sk
 
 Changes take effect after `/reload-plugins`.
 
+## Using as a Q&A bot
+
+To make every spawned child claude adopt a specific persona (e.g. "you are a Q&A assistant for project X, always answer in Chinese, never modify files"), point the plugin at a prompt file:
+
+```json
+{
+  "appendSystemPromptFile": "/absolute/path/to/persona.md"
+}
+```
+
+The file is passed to each spawned child claude via `--append-system-prompt-file`; claude reads it and appends the content to its default system prompt. Keep it focused on **persona / always-on constraints** — project-specific knowledge belongs in the target repo's `CLAUDE.md` / `.claude/skills/`, not in this file.
+
+**Reload semantics:** changing the prompt file does not retroactively affect running tmux sessions. To pick up new content for a scope: `tmux kill-session -t lark-<scopeId>` (next inbound message will respawn with the new prompt), or wait for the idle-TTL sweep.
+
+**Caveats:** the path must be absolute; missing / wrong-type / empty (size 0) files are ignored with a logger warn/error (master stays up). Persona size ~1-2 KB is a reasonable target; larger files are accepted but eat context budget on every turn.
+
 ## Layout
 ```
 ~/.claude/channels/lark-channel/
