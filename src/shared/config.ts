@@ -33,12 +33,14 @@ export interface ConfigFile {
     rpcMs?: number;
     dedupMs?: number;
   };
+  appendSystemPromptFile?: string;
   ackEmoji?: string;
 }
 
 export interface AppConfig {
   // 运行时开关
   debug: boolean;
+  appendSystemPromptFile: string | undefined;
   // Feishu 凭据
   appId: string;
   appSecret: string;
@@ -109,6 +111,10 @@ export function loadConfig(overrideConfigPath?: string): AppConfig {
 
   return {
     debug: file.debug === true,
+    appendSystemPromptFile:
+      typeof file.appendSystemPromptFile === 'string' && file.appendSystemPromptFile.length > 0
+        ? file.appendSystemPromptFile
+        : undefined,
     appId: feishu.appId ?? '',
     appSecret: feishu.appSecret ?? '',
     domain,
