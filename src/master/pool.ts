@@ -223,8 +223,10 @@ export class TmuxPool {
 
   private spawnTmux(session: Session, tmuxSession: string): boolean {
     const lg = this.deps.logger;
+    const appendSystemPromptFile = this.resolveAppendSystemPromptFile();
     const cmd = buildClaudeCmd({
       resumeSessionId: session.claudeSessionId || undefined,
+      appendSystemPromptFile,
     });
 
     // 使用 spawnSync 避免继承 TTY；环境变量通过独立 -e 参数传入
@@ -278,6 +280,39 @@ export class TmuxPool {
       }
     }
     lg.warn(`autoConfirm: dev-channel warning never appeared within 10s (may already be dismissed); tmux=${tmuxSession}`);
+  }
+
+  /**
+   * 校验 config.appendSystemPromptFile 是否能作为 --append-system-prompt-file
+   * 的值传给 child claude。任何检查失败都降级为 undefined（spawn 继续、不加 flag），
+   * 避免 child 启动时因为 bad 路径立即退出 → 触发 hello-timeout 重试死循环。
+   *
+   * 不读取文件内容，只做存在性与大小检查；内容解析由 claude 进程自己完成。
+   */
+  private resolveAppendSystemPromptFile(): string | undefined {
+    const file = this.deps.config.appendSystemPromptFile;
+    if (!file) return undefined;
+    if (!path.isAbsolute(file)) {
+      this.deps.logger.error(`appendSystemPromptFile must be absolute, got: ${file}; ignoring`);
+      return undefined;
+    }
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(file);
+    } catch (err: any) {
+      this.deps.logger.error(`appendSystemPromptFile stat failed path=${file} err=${err?.message ?? err}; ignoring`);
+      return undefined;
+    }
+    if (!stat.isFile()) {
+      this.deps.logger.error(`appendSystemPromptFile is not a regular file path=${file}; ignoring`);
+      return undefined;
+    }
+    if (stat.size === 0) {
+      this.deps.logger.warn(`appendSystemPromptFile is empty path=${file}; ignoring`);
+      return undefined;
+    }
+    this.deps.logger.debug(`appendSystemPromptFile OK path=${file} bytes=${stat.size}`);
+    return file;
   }
 
   private killEntry(scopeKey: string): void {
@@ -345,22 +380,26 @@ export class TmuxPool {
 }
 
 function shellQuote(s: string): string {
-  // 单引号转义；仅用于 tmux 命令字符串参数中的 "claude --resume X"
+  // 单引号转义；用于 tmux 命令字符串参数（--resume <id> / --append-system-prompt-file <path>）
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
 export interface BuildClaudeCmdOpts {
   resumeSessionId?: string;
+  appendSystemPromptFile?: string;
 }
 
 /**
  * 构造 spawned child claude 的 shell 命令字符串。纯函数、可单测。
- * Task 4 会在此基础上加 appendSystemPromptFile 分支。
+ * 生成的命令包含 base flags、可选 --append-system-prompt-file、可选 --resume。
  */
 export function buildClaudeCmd(opts: BuildClaudeCmdOpts): string {
   const channelArg = '--dangerously-load-development-channels plugin:lark-channel@claude-lark-channel';
   const permArg = '--dangerously-skip-permissions';
   const parts: string[] = ['claude', channelArg, permArg];
+  if (opts.appendSystemPromptFile && opts.appendSystemPromptFile.length > 0) {
+    parts.push(`--append-system-prompt-file ${shellQuote(opts.appendSystemPromptFile)}`);
+  }
   if (opts.resumeSessionId) {
     parts.push(`--resume ${shellQuote(opts.resumeSessionId)}`);
   }
