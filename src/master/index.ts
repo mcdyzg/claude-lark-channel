@@ -70,22 +70,22 @@ export async function startMaster(): Promise<void> {
   if (!got) {
     const ownerPid = readOwnerPid(lockPath);
     if (ownerPid == null) {
-      console.error(`[lark-channel] ✗ cannot acquire lock at ${lockPath} and cannot read owner pid`);
+      rootLogger.error(`[lark-channel] ✗ cannot acquire lock at ${lockPath} and cannot read owner pid`);
       process.exit(1);
     }
     const tr = await attemptTakeover(ownerPid, rootLogger);
     if (tr.ok) {
       got = await tryAcquireLock(lockPath);
       if (!got) {
-        console.error(`[lark-channel] ✗ lock re-acquisition failed after takeover (pid=${ownerPid} method=${tr.method})`);
-        console.error(`[lark-channel]   likely a third master raced in; retry /reload-plugins`);
+        rootLogger.error(`[lark-channel] ✗ lock re-acquisition failed after takeover (pid=${ownerPid} method=${tr.method})`);
+        rootLogger.error(`[lark-channel]   likely a third master raced in; retry /reload-plugins`);
         process.exit(1);
       }
     } else {
-      console.error(`[lark-channel] ✗ cannot acquire lock (held by pid=${ownerPid}, takeover refused: ${tr.reason})`);
-      console.error(`[lark-channel]   manually investigate:  ps -p ${ownerPid}`);
-      console.error(`[lark-channel]   if it is a lark-channel master: kill ${ownerPid} && /reload-plugins`);
-      console.error(`[lark-channel]   lock file: ${lockPath}`);
+      rootLogger.error(`[lark-channel] ✗ cannot acquire lock (held by pid=${ownerPid}, takeover refused: ${tr.reason})`);
+      rootLogger.error(`[lark-channel]   manually investigate:  ps -p ${ownerPid}`);
+      rootLogger.error(`[lark-channel]   if it is a lark-channel master: kill ${ownerPid} && /reload-plugins`);
+      rootLogger.error(`[lark-channel]   lock file: ${lockPath}`);
       process.exit(1);
     }
   }
