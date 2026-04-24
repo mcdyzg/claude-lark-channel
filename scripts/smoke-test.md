@@ -55,3 +55,17 @@ Scenarios:
 - [ ] **Directory rejected**: point `appendSystemPromptFile` at a directory path (e.g. `/tmp`). `/reload-plugins`, kill any `lark-*` sessions. DM the bot. Expect: normal reply + `grep appendSystemPromptFile logs/debug.log` shows `is not a regular file`.
 
 **Cleanup for this section:** `rm -f /tmp/lark-persona-probe.md /tmp/empty-persona.md`; unset `appendSystemPromptFile` in `~/.claude/channels/lark-channel/config.json` (set to `""` or delete the key); `/reload-plugins`.
+
+## Auto-takeover on master startup (spec 2026-04-24)
+
+**Prerequisites for this section:**
+- `debug: true` in config.json (ensures handoff progress lines also land in debug.log, not just stderr)
+- You can start masters via `npm run start` from either the workspace or the plugin cache dir
+
+Scenarios:
+
+- [ ] **Happy path — automatic takeover between two v0.1.2+ masters**: start a master (terminal 1: `cd /path/to/workspace && npm run start`). Confirm stderr shows `[lark-channel] master vX ready (pid=P1)`. Now start a second master (terminal 2: same command). Expect: terminal 2 prints `[lark-channel] replacing old master pid=P1 — SIGTERM` then `[lark-channel] master vX ready (pid=P2)` within 2 seconds, and terminal 1 prints `shutdown complete` and exits 0. `tmux ls | grep lark-` children (if any) persist unharmed.
+- [ ] **Non-our-master refusal**: with no master running, write a fake lock pointing at your shell (`echo $$ > ~/.claude/channels/lark-channel/master-*.lock`). Start a master: `npm run start`. Expect: stderr shows the multi-line `[lark-channel] ✗ cannot acquire lock ...` error recipe, exit code 1, and your shell's PID is **not** killed. Clean up: `rm ~/.claude/channels/lark-channel/master-*.lock`.
+- [ ] **Stale-lock self-heal** (not new behavior, regression check): write a lock with a dead PID (`echo 99999 > ~/.claude/channels/lark-channel/master-*.lock` — assuming PID 99999 is not in use; verify with `ps -p 99999`). Start a master. Expect: normal startup (lock is stolen by existing `lock.ts` logic), no takeover attempt, no `[lark-channel] replacing ...` line in stderr.
+- [ ] **Error visibility with debug=false**: set `"debug": false` in config.json. Trigger a known error (e.g. point `appendSystemPromptFile` at a directory like `/tmp`). Start master. Expect: terminal stderr shows the `resolveAppendSystemPromptFile ... is not a regular file` error line on first spawn (not silent); `~/.claude/channels/lark-channel/logs/debug.log` file is **NOT** created.
+- [ ] **Version banner accuracy**: `cat package.json | grep version` noting the value `vX.Y.Z`. Start master. Expect: stderr shows `[lark-channel] master v<X.Y.Z> ready (pid=...)` with the exact string from package.json (not a hardcoded number).
