@@ -10,7 +10,7 @@ describe('protocol', () => {
   });
 
   it('round-trips a hello envelope', () => {
-    const env: Envelope = { t: 'hello', scopeKey: 'chat:x', scopeId: 'id', pid: 1, version: '0.1.0' };
+    const env: Envelope = { t: 'hello', scopeKey: 'chat:x', scopeId: 'id', pid: 1, version: '0.1.1' };
     const parsed = parseEnvelope(serializeEnvelope(env).trim());
     expect(parsed).toEqual(env);
   });

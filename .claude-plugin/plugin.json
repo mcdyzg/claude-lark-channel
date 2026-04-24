@@ -1,6 +1,6 @@
 {
   "name": "lark-channel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Scope-isolated Feishu/Lark channel plugin for Claude Code",
   "author": { "name": "mcdyzg" },
   "repository": "https://github.com/mcdyzg/claude-lark-channel",

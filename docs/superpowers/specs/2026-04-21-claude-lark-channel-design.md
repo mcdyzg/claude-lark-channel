@@ -333,7 +333,7 @@ child 启动
 
 ```
 # child → master
-{"t":"hello","scopeKey":"thread:oc_xxx:t_abc","scopeId":"a7f3-...","pid":12345,"version":"0.1.0"}
+{"t":"hello","scopeKey":"thread:oc_xxx:t_abc","scopeId":"a7f3-...","pid":12345,"version":"0.1.1"}
 {"t":"rpc_call","id":"r1","method":"reply","params":{"chat_id":"oc_xxx","text":"hi","thread_id":"t_abc"}}
 
 # master → child
@@ -655,7 +655,7 @@ LARK_CHANNEL_LOG_LEVEL=info             # error | warn | info | debug
   "owner": { "name": "<owner>", "email": "<email>" },
   "plugins": [{
     "name": "lark-channel",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "source": "./",
     "description": "Scope-isolated Feishu/Lark channel plugin. Each chat/thread runs in its own tmux-hosted Claude session.",
     "category": "productivity",
@@ -668,7 +668,7 @@ LARK_CHANNEL_LOG_LEVEL=info             # error | warn | info | debug
 ```json
 {
   "name": "lark-channel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Scope-isolated Feishu/Lark channel plugin for Claude Code",
   "author": { "name": "<owner>" },
   "repository": "https://github.com/<owner>/claude-lark-channel",

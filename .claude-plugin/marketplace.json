@@ -5,7 +5,7 @@
   "plugins": [
     {
       "name": "lark-channel",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "source": "./",
       "description": "Scope-isolated Feishu/Lark channel plugin. Each chat/thread runs in its own tmux-hosted Claude session.",
       "category": "productivity",

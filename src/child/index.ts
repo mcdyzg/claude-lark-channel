@@ -27,7 +27,7 @@ export async function startChild(): Promise<void> {
   logger.info(`starting scope=${scopeKey} scopeId=${scopeId} sock=${sock} debug=${debug}`);
 
   const server = new McpServer(
-    { name: 'claude-lark-channel', version: '0.1.0' },
+    { name: 'claude-lark-channel', version: '0.1.1' },
     {
       capabilities: {
         logging: {},

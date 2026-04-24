@@ -63,7 +63,7 @@ export async function startMaster(): Promise<void> {
 
   // MCP transport 对接宿主 Claude（不暴露任何工具，仅保持 stdio 连通）
   const mcpServer = new McpServer(
-    { name: 'claude-lark-channel-master', version: '0.1.0' },
+    { name: 'claude-lark-channel-master', version: '0.1.1' },
     {
       capabilities: { logging: {} },
       instructions: 'claude-lark-channel master: inbound Feishu messages are forwarded to per-scope Claude sessions via tmux. This instance exposes no tools.',
