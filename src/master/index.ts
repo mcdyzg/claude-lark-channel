@@ -8,6 +8,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { loadConfig, validateMasterConfig } from '../shared/config.js';
 import { SessionStore } from '../shared/session-store.js';
 import { tryAcquireLock } from '../shared/lock.js';
+import { attemptTakeover } from '../shared/master-handoff.js';
+import { readPackageVersion } from '../shared/version.js';
 import { resolveScopeKey } from '../shared/scope.js';
 import {
   createFeishuClient,
@@ -32,6 +34,13 @@ import { createRootLogger } from '../shared/logger.js';
 
 const CHAT_HISTORY_LIMIT = 20;
 
+function readOwnerPid(lockPath: string): number | null {
+  try {
+    const n = parseInt(fs.readFileSync(lockPath, 'utf-8'), 10);
+    return Number.isFinite(n) ? n : null;
+  } catch { return null; }
+}
+
 export async function startMaster(): Promise<void> {
   const cfg = loadConfig();
   const errors = validateMasterConfig(cfg);
@@ -49,21 +58,44 @@ export async function startMaster(): Promise<void> {
   fs.mkdirSync(cfg.inboxDir, { recursive: true });
   fs.mkdirSync(cfg.logsDir, { recursive: true });
 
-  // 单 master 进程锁
+  // 根 logger 要在 lock 处理之前创建，以便 takeover 期间的 error 能落 debug.log。
+  // debug=false 时它仍然能把 error 级别送到 stderr（Task 1 的保证）。
+  const rootLogger = createRootLogger('master', cfg.logsDir, cfg.debug);
+  const pkgVersion = readPackageVersion();
+
+  // 单 master 进程锁；撞锁时尝试接管老 master（见 spec 2026-04-24）。
+  // attemptTakeover 失败的极端情况（非 lark-channel 进程 / 打不死）→ 醒目错误后退出 1。
   const lockPath = path.join(cfg.storeDir, `master-${cfg.appId}.lock`);
-  const got = await tryAcquireLock(lockPath);
+  let got = await tryAcquireLock(lockPath);
   if (!got) {
-    console.error('[master] another master is running; exiting');
-    process.exit(0);
+    const ownerPid = readOwnerPid(lockPath);
+    if (ownerPid == null) {
+      console.error(`[lark-channel] ✗ cannot acquire lock at ${lockPath} and cannot read owner pid`);
+      process.exit(1);
+    }
+    const tr = await attemptTakeover(ownerPid, rootLogger);
+    if (tr.ok) {
+      got = await tryAcquireLock(lockPath);
+      if (!got) {
+        console.error(`[lark-channel] ✗ lock re-acquisition failed after takeover (pid=${ownerPid} method=${tr.method})`);
+        console.error(`[lark-channel]   likely a third master raced in; retry /reload-plugins`);
+        process.exit(1);
+      }
+    } else {
+      console.error(`[lark-channel] ✗ cannot acquire lock (held by pid=${ownerPid}, takeover refused: ${tr.reason})`);
+      console.error(`[lark-channel]   manually investigate:  ps -p ${ownerPid}`);
+      console.error(`[lark-channel]   if it is a lark-channel master: kill ${ownerPid} && /reload-plugins`);
+      console.error(`[lark-channel]   lock file: ${lockPath}`);
+      process.exit(1);
+    }
   }
 
-  // 根 logger：debug=false 时完全静默；debug=true 时写 <logsDir>/debug.log
-  const rootLogger = createRootLogger('master', cfg.logsDir, cfg.debug);
-  rootLogger.info(`startMaster pid=${process.pid} storeDir=${cfg.storeDir} scopeMode=${cfg.scopeMode} debug=${cfg.debug}`);
+  rootLogger.info(`startMaster pid=${process.pid} version=${pkgVersion} storeDir=${cfg.storeDir} scopeMode=${cfg.scopeMode} debug=${cfg.debug}`);
+  console.error(`[lark-channel] master v${pkgVersion} ready (pid=${process.pid})`);
 
   // MCP transport 对接宿主 Claude（不暴露任何工具，仅保持 stdio 连通）
   const mcpServer = new McpServer(
-    { name: 'claude-lark-channel-master', version: '0.1.1' },
+    { name: 'claude-lark-channel-master', version: pkgVersion },
     {
       capabilities: { logging: {} },
       instructions: 'claude-lark-channel master: inbound Feishu messages are forwarded to per-scope Claude sessions via tmux. This instance exposes no tools.',
