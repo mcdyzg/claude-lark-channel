@@ -927,7 +927,7 @@ git -c user.email=loujiahao@bytedance.com -c user.name=loujiahao commit -m "docs
 ### Task 6.2: Propagate to plugin cache + marketplace clone
 
 **Files:**
-- Copy to: `~/.claude/plugins/cache/claude-lark-channel/lark-channel/0.1.1/src/`
+- Copy to: `~/.claude/plugins/cache/claude-lark-channel/lark-channel/0.1.2/src/`
 - Copy to: `~/.claude/plugins/marketplaces/claude-lark-channel/src/`
 
 This is necessary because the user's master runs from the plugin cache, not the workspace repo.
@@ -936,7 +936,7 @@ This is necessary because the user's master runs from the plugin cache, not the 
 
 ```bash
 cd /Users/bytedance/haha/x/agent/claude-about/claude-lark-channel
-for dst in ~/.claude/plugins/cache/claude-lark-channel/lark-channel/0.1.1 \
+for dst in ~/.claude/plugins/cache/claude-lark-channel/lark-channel/0.1.2 \
            ~/.claude/plugins/marketplaces/claude-lark-channel; do
   cp src/master/message-parser.ts "$dst/src/master/message-parser.ts"
   cp src/master/feishu-client.ts  "$dst/src/master/feishu-client.ts"
@@ -951,7 +951,7 @@ done
 ```bash
 for f in src/master/message-parser.ts src/master/feishu-client.ts src/master/bootstrap.ts src/master/index.ts; do
   LOCAL=$(md5 -q "/Users/bytedance/haha/x/agent/claude-about/claude-lark-channel/$f")
-  CACHE=$(md5 -q "$HOME/.claude/plugins/cache/claude-lark-channel/lark-channel/0.1.1/$f")
+  CACHE=$(md5 -q "$HOME/.claude/plugins/cache/claude-lark-channel/lark-channel/0.1.2/$f")
   if [ "$LOCAL" = "$CACHE" ]; then
     echo "OK  $f"
   else

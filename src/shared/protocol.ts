@@ -12,7 +12,7 @@ export type Envelope =
   | { t: 'pong' }
   | { t: string; [k: string]: unknown };  // unknown forward-compat
 
-export const PROTOCOL_VERSION = '0.1.1';
+export const PROTOCOL_VERSION = '0.1.2';
 
 export function serializeEnvelope(env: Envelope): string {
   return JSON.stringify(env) + '\n';

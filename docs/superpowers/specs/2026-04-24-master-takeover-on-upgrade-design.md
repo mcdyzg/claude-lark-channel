@@ -5,15 +5,15 @@ Status: Draft (approved by user)
 
 ## 背景
 
-今天早上的真实 incident：用户把 plugin 从 0.1.0 升级到 0.1.1（workspace / marketplace / cache/0.1.1 都已同步），打开新 host claude 后发现 @机器人不回复、`~/.claude/channels/lark-channel/logs/` 没有 `debug.log`。
+今天早上的真实 incident：用户把 plugin 从 0.1.0 升级到 0.1.2（workspace / marketplace / cache/0.1.2 都已同步），打开新 host claude 后发现 @机器人不回复、`~/.claude/channels/lark-channel/logs/` 没有 `debug.log`。
 
 根因三合一（见 `src/shared/lock.ts`、`src/shared/logger.ts:35-42`、`src/master/index.ts:54-58`）：
 
 1. **Logger 在 `debug=false` 时完全 no-op**（`write()` 首行 `if (!this.enabled) return` 吞掉所有级别）——老 master 昨晚启动时 `debug=false`，配置文件后来改成 true 也影响不到已加载的进程，所以看不到任何信号
 2. **Lock 冲突的路径只有一行 `console.error('[master] another master is running; exiting')` + `process.exit(0)`**——信息量小（不说持有者 PID、不说怎么修），exit 0 还让宿主当作"成功退出"不吵闹
-3. **运行中的 master 看不到版本号**——从日志 / ps 上分不清"0.1.0 僵尸"和"0.1.1 新起"
+3. **运行中的 master 看不到版本号**——从日志 / ps 上分不清"0.1.0 僵尸"和"0.1.2 新起"
 
-结果：0.1.0 僵尸 master（由一个昨晚 `npm run start` 启的 shell 留下）一直霸占着 `master-<appId>.lock` 和 `bridge.sock`。今天 10:46 新启动的 host claude 尝试加载 0.1.1 的 master，撞锁，`exit(0)` 静默失败。WS 事件进来能被老 master 接收、写 session 记录，但 @消息处理链路在 0.1.0 上又因为某些其他原因不工作（细节不再重要），而且 logger 是死的——完全黑盒。
+结果：0.1.0 僵尸 master（由一个昨晚 `npm run start` 启的 shell 留下）一直霸占着 `master-<appId>.lock` 和 `bridge.sock`。今天 10:46 新启动的 host claude 尝试加载 0.1.2 的 master，撞锁，`exit(0)` 静默失败。WS 事件进来能被老 master 接收、写 session 记录，但 @消息处理链路在 0.1.0 上又因为某些其他原因不工作（细节不再重要），而且 logger 是死的——完全黑盒。
 
 PID lock 本就是"1 master / appId"的硬 invariant。升级时老 master 没被主动替换，invariant 违反就静默发生。
 
@@ -169,9 +169,9 @@ console.error(`[lark-channel] master v${pkgVersion} ready (pid=${process.pid})`)
 
 `readPackageVersion()` 用 `import.meta.url` 或 `__dirname` 定位当前文件，再往上找到 `package.json` 读 `version` 字段。找不到兜底为 `'unknown'`。
 
-原因不直接从 `'0.1.1'` 字符串硬编：今天早上的 incident 根源之一就是版本漂移——代码里说 A、实际是 B；从 `package.json` 唯一源读是防再犯。
+原因不直接从 `'0.1.2'` 字符串硬编：今天早上的 incident 根源之一就是版本漂移——代码里说 A、实际是 B；从 `package.json` 唯一源读是防再犯。
 
-MCP server 声明里也有个硬编的 `version: '0.1.1'`（`master/index.ts` 附近的 `new McpServer({ name, version })`）——借机也改成读 `pkgVersion`，一起消灭硬编。
+MCP server 声明里也有个硬编的 `version: '0.1.2'`（`master/index.ts` 附近的 `new McpServer({ name, version })`）——借机也改成读 `pkgVersion`，一起消灭硬编。
 
 ### 5. T4: README Troubleshooting
 
@@ -231,7 +231,7 @@ attemptTakeover(ownerPid, lockPath, logger, {
 
 新增一节 "## Auto takeover on upgrade (spec 2026-04-24)"：
 
-- [ ] **Happy path**：跑老版 master（可以简单地用 `npm run start` 起 v0.1.1，先让它占锁），再开一个窗口 `npm run start`。第二个应该打 `replacing old master pid=X — SIGTERM` 然后 `master vX.Y.Z ready`，第一个 window 跑了 graceful shutdown
+- [ ] **Happy path**：跑老版 master（可以简单地用 `npm run start` 起 v0.1.2，先让它占锁），再开一个窗口 `npm run start`。第二个应该打 `replacing old master pid=X — SIGTERM` 然后 `master vX.Y.Z ready`，第一个 window 跑了 graceful shutdown
 - [ ] **Non-our-master refusal**：用 `echo $$ > master-<appId>.lock` 把锁指向当前 shell 的 PID，然后起 master。它应该判 `not-our-master`、exit 1、打醒目错误。删掉 lock 再起就正常
 - [ ] **SIGKILL fallback**：人为构造一个 hang 住的 lark-channel 进程（比如一个 `node -e 'process.on("SIGTERM",()=>{}); setInterval(()=>{},1e9)'` 改掉 argv 让 ps 显示 lark-channel）… 这个场景太人工，smoke 不做，只单测
 - [ ] **Debug=false error visibility**：config 里 `debug: false`，跑 master 起不来的场景（比如故意把 `appendSystemPromptFile` 指向一个存在但无读权限的文件），应该能从**启动 master 的终端 stderr** 看到错误行；debug.log 文件不应被创建

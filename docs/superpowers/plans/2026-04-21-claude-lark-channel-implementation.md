@@ -322,7 +322,7 @@ git commit -m "chore: init repo with gitignore"
 ```json
 {
   "name": "claude-lark-channel",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Feishu/Lark channel plugin for Claude Code with per-scope tmux isolation",
   "type": "module",
   "main": "dist/index.js",
@@ -719,7 +719,7 @@ describe('protocol', () => {
   });
 
   it('round-trips a hello envelope', () => {
-    const env: Envelope = { t: 'hello', scopeKey: 'chat:x', scopeId: 'id', pid: 1, version: '0.1.1' };
+    const env: Envelope = { t: 'hello', scopeKey: 'chat:x', scopeId: 'id', pid: 1, version: '0.1.2' };
     const parsed = parseEnvelope(serializeEnvelope(env).trim());
     expect(parsed).toEqual(env);
   });
@@ -774,7 +774,7 @@ export type Envelope =
   | { t: 'pong' }
   | { t: string; [k: string]: unknown };  // unknown forward-compat
 
-export const PROTOCOL_VERSION = '0.1.1';
+export const PROTOCOL_VERSION = '0.1.2';
 
 export function serializeEnvelope(env: Envelope): string {
   return JSON.stringify(env) + '\n';
@@ -3012,7 +3012,7 @@ export async function startChild(): Promise<void> {
   console.error(`[child] starting scope=${scopeKey} id=${scopeId}`);
 
   const server = new McpServer(
-    { name: 'claude-lark-channel', version: '0.1.1' },
+    { name: 'claude-lark-channel', version: '0.1.2' },
     {
       capabilities: {
         logging: {},
@@ -3135,7 +3135,7 @@ export async function startMaster(): Promise<void> {
 
   // MCP transport for the host Claude (expose no tools; just keep stdio alive)
   const mcpServer = new McpServer(
-    { name: 'claude-lark-channel-master', version: '0.1.1' },
+    { name: 'claude-lark-channel-master', version: '0.1.2' },
     {
       capabilities: { logging: {} },
       instructions: 'claude-lark-channel master: inbound Feishu messages are forwarded to per-scope Claude sessions via tmux. This instance exposes no tools.',
@@ -3455,7 +3455,7 @@ git commit -m "feat: role dispatcher selects master or child from env"
 ```json
 {
   "name": "lark-channel",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Scope-isolated Feishu/Lark channel plugin for Claude Code",
   "author": { "name": "mcdyzg" },
   "repository": "https://github.com/mcdyzg/claude-lark-channel",
@@ -3474,7 +3474,7 @@ git commit -m "feat: role dispatcher selects master or child from env"
   "plugins": [
     {
       "name": "lark-channel",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "source": "./",
       "description": "Scope-isolated Feishu/Lark channel plugin. Each chat/thread runs in its own tmux-hosted Claude session.",
       "category": "productivity",
@@ -3813,7 +3813,7 @@ Follow `scripts/smoke-test.md` against a real test Feishu app. Mark each checkbo
 - [ ] **Step 4: Tag release**
 
 ```bash
-git tag v0.1.1
+git tag v0.1.2
 git log --oneline | head -30
 ```
 

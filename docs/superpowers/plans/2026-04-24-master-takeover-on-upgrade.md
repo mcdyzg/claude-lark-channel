@@ -507,7 +507,7 @@ Run:
 npx tsx -e "import('./src/shared/version.js').then(m => console.log('version =', m.readPackageVersion()))"
 ```
 
-Expected: `version = 0.1.1` (or whatever `package.json` currently says).
+Expected: `version = 0.1.2` (or whatever `package.json` currently says).
 
 - [ ] **Step 3: Typecheck + full tests**
 
@@ -629,7 +629,7 @@ No separate step — the version banner `rootLogger.info(...)` + `console.error(
 Find the line that currently reads (was at ~line 66):
 
 ```ts
-    { name: 'claude-lark-channel-master', version: '0.1.1' },
+    { name: 'claude-lark-channel-master', version: '0.1.2' },
 ```
 
 Replace with:
@@ -673,7 +673,7 @@ Also:
 - Startup now logs 'version=X' to debug.log and echoes
   '[lark-channel] master vX ready (pid=Y)' to stderr so operators
   can tell versions apart at a glance.
-- MCP server no longer hardcodes '0.1.1'; reads from package.json
+- MCP server no longer hardcodes '0.1.2'; reads from package.json
   via readPackageVersion().
 
 Closes the silent-failure mode from the 2026-04-24 incident.

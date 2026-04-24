@@ -33,7 +33,7 @@ Single TypeScript plugin, two roles (master/child) selected by `LARK_CHANNEL_SCO
 - **SessionStart hook writes the session_id**: but if Claude exits before persisting its `.jsonl` (e.g. spawn → hello timeout → kill), the stored id is stale. Pool handles this: on hello timeout with a non-empty `claudeSessionId`, it clears the id and retries a fresh spawn once
 - **Plugin hooks depend on `jq`**: if jq is missing, the session_id capture silently no-ops and `--resume` won't kick in next cold start
 - **tmux `new-session -e KEY=VAL` requires tmux ≥ 3.2**
-- **Three copies of the code**: workspace (`/Users/bytedance/haha/x/agent/claude-about/claude-lark-channel`), marketplace clone (`~/.claude/plugins/marketplaces/claude-lark-channel`), and runtime cache (`~/.claude/plugins/cache/claude-lark-channel/lark-channel/0.1.1`). They all must stay in sync during development — after editing source, copy changed files to cache + marketplace so `/reload-plugins` picks them up
+- **Three copies of the code**: workspace (`/Users/bytedance/haha/x/agent/claude-about/claude-lark-channel`), marketplace clone (`~/.claude/plugins/marketplaces/claude-lark-channel`), and runtime cache (`~/.claude/plugins/cache/claude-lark-channel/lark-channel/0.1.2`). They all must stay in sync during development — after editing source, copy changed files to cache + marketplace so `/reload-plugins` picks them up
 
 ## Meta schema (channel_push params.meta fields)
 - **Background frame** (`kind: "background"`): `scope_key`; optionally `image_path` / `image_paths` (root images)
