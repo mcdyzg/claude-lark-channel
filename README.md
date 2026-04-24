@@ -93,6 +93,12 @@ The file is passed to each spawned child claude via `--append-system-prompt-file
 - **Inspect a scope's Claude session**: `tmux ls | grep lark-` then `tmux attach -t lark-<uuid>`. Safe — the scope continues even if you detach.
 - **Force-reset a scope's Claude session**: `tmux kill-session -t lark-<id>` AND delete the matching `sessions/by-id/<scopeId>.json`. Next message to that chat/thread spawns a brand-new Claude session.
 - **"No conversation found with session ID"**: a previously-stored `claudeSessionId` was never persisted by Claude (e.g. crash before first turn). Master auto-retries as a fresh session — transparent to you.
+- **Bot silently not replying / no logs appearing after plugin upgrade**: usually means an old-version master is still holding the lock. From v0.1.2 onward the new master auto-takes-over on startup — you should see `[lark-channel] replacing old master pid=X — SIGTERM` followed by `[lark-channel] master vY.Z ready` in whatever terminal launched the new master. If instead you see `[lark-channel] ✗ cannot acquire lock ...`, the takeover refused (typically because the lock file points at a PID that is not a lark-channel process). Inspect manually:
+  ```bash
+  cat ~/.claude/channels/lark-channel/master-*.lock      # 持有者 PID
+  ps -p <pid>                                            # 确认身份
+  ```
+  如果它是 lark-channel master 但 takeover 没生效，`kill <pid>` 后 `/reload-plugins`。如果它不是 lark-channel 进程（PID 被复用或 lock 文件损坏），删除锁文件再 `/reload-plugins`。
 
 ## Design
 - Original architecture: `docs/superpowers/specs/2026-04-21-claude-lark-channel-design.md`
