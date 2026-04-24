@@ -5,8 +5,9 @@ export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
 
 /**
  * 单一开关的日志器：
- * - debug=false → 所有级别全部 no-op（不写 stderr、不写文件）
- * - debug=true  → 所有级别写入 debug.log，同时在 stderr 输出（方便 MCP 宿主捕获）
+ * - error 级别永远输出到 stderr（无论 debug 开关），保证升级/配置错误等关键信号可见
+ * - debug=false → info/warn/debug 全部 no-op，不写文件、不写 stderr
+ * - debug=true  → 所有级别写入 debug.log，同时在 stderr 输出
  *
  * master/child 共享同一个 debug.log，便于跨进程按时间轴对齐。
  */
@@ -33,10 +34,13 @@ export class Logger {
   }
 
   private write(level: LogLevel, args: unknown[]): void {
-    if (!this.enabled) return;
     const line = this.format(level, args);
-    console.error(line);
-    if (this.logFile) {
+    // error 永远走 stderr；其他级别由 debug 开关门控
+    if (level === 'error' || this.enabled) {
+      console.error(line);
+    }
+    // 文件只在 debug=true 时写
+    if (this.enabled && this.logFile) {
       try { fs.appendFileSync(this.logFile, line + '\n'); } catch {/* disk full / perms; ignore */}
     }
   }
